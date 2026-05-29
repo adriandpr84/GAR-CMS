@@ -1,0 +1,77 @@
+---
+# ==============================================================
+# 1. BLOQUE UNIVERSAL: AGENTE SNMP (Para los 17 nodos)
+# ==============================================================
+
+- name: "[SNMP] Instalar dependencias del agente"
+  ansible.builtin.apt:
+    name: snmpd
+    state: present
+    update_cache: yes
+
+- name: "[SNMP] Desplegar configuracion dinamica snmpd.conf"
+  ansible.builtin.template:
+    src: snmpd.conf.j2
+    dest: /etc/snmp/snmpd.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: "Reiniciar servicio snmpd"
+
+- name: "[SNMP] Garantizar que el servicio este corriendo y habilitado"
+  ansible.builtin.systemd:
+    name: snmpd
+    state: started
+    enabled: yes
+
+# ==============================================================
+# 2. BLOQUE ESPECÍFICO: SOLO PARA LOS 8 HOTDESKS
+# ==============================================================
+
+- name: "[Hotdesks] Crear el usuario de sistema para alumnos"
+  ansible.builtin.user:
+    name: alumno
+    comment: "Usuario Estudiante GAR"
+    shell: /bin/bash
+    groups: sudo
+    append: yes
+  when: "'hotdesk' in inventory_hostname"
+
+- name: "[Hotdesks] Instalar herramientas esenciales de diagnostico de red"
+  ansible.builtin.apt:
+    name:
+      - curl
+      - net-tools
+      - traceroute
+      - tmux
+    state: present
+  when: "'hotdesk' in inventory_hostname"
+
+# ==============================================================
+# 3. BLOQUE ESPECÍFICO: SOLO PARA EL SERVIDOR MONITORING
+# ==============================================================
+
+- name: "[CheckMK] Instalar motor Docker en el nodo de monitoreo"
+  ansible.builtin.apt:
+    name: docker.io
+    state: present
+  when: "inventory_hostname == 'monitoring'"
+
+- name: "[CheckMK] Asegurar que el demonio de Docker este activo"
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: yes
+  when: "inventory_hostname == 'monitoring'"
+
+- name: "[CheckMK] Desplegar el contenedor oficial de CheckMK Raw"
+  community.docker.docker_container:
+    name: checkmk-server
+    image: checkmk/check-mk-raw:2.3.0-latest
+    state: started
+    restart_policy: always
+    ports:
+      - "80:5000"
+    volumes:
+      - /opt/omd/sites:/opt/omd/sites
+  when: "inventory_hostname == 'monitoring'"
