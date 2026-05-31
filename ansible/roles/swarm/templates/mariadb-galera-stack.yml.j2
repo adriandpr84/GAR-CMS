@@ -1,0 +1,117 @@
+version: "3.8"
+
+services:
+  db1:
+    image: {{ db_image }}
+    networks:
+      - {{ db_overlay_network }}
+    environment:
+      MYSQL_ROOT_PASSWORD: "{{ db_root_password }}"
+      MYSQL_DATABASE: "{{ db_name }}"
+      MYSQL_USER: "{{ db_user }}"
+      MYSQL_PASSWORD: "{{ db_password }}"
+      GALERA_CLUSTER_NAME: "{{ db_galera_cluster_name }}"
+      GALERA_CLUSTER_ADDRESS: "gcomm://db1,db2,db3"
+      GALERA_BOOTSTRAP: "yes"
+      GALERA_NODE_NAME: "db1"
+      GALERA_NODE_ADDRESS: "db1"
+      GALERA_MARIABACKUP_USER: "{{ db_mariabackup_user }}"
+      GALERA_MARIABACKUP_PASSWORD: "{{ db_mariabackup_password }}"
+    volumes:
+      - db1_data:/var/lib/mysql
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 10s
+      placement:
+        constraints:
+          - node.hostname == {{ db_node_1 }}
+
+  db2:
+    image: {{ db_image }}
+    networks:
+      - {{ db_overlay_network }}
+    environment:
+      MYSQL_ROOT_PASSWORD: "{{ db_root_password }}"
+      MYSQL_DATABASE: "{{ db_name }}"
+      MYSQL_USER: "{{ db_user }}"
+      MYSQL_PASSWORD: "{{ db_password }}"
+      GALERA_CLUSTER_NAME: "{{ db_galera_cluster_name }}"
+      GALERA_CLUSTER_ADDRESS: "gcomm://db1,db2,db3"
+      GALERA_BOOTSTRAP: "no"
+      GALERA_NODE_NAME: "db2"
+      GALERA_NODE_ADDRESS: "db2"
+      GALERA_MARIABACKUP_USER: "{{ db_mariabackup_user }}"
+      GALERA_MARIABACKUP_PASSWORD: "{{ db_mariabackup_password }}"
+    volumes:
+      - db2_data:/var/lib/mysql
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 10s
+      placement:
+        constraints:
+          - node.hostname == {{ db_node_2 }}
+
+  db3:
+    image: {{ db_image }}
+    networks:
+      - {{ db_overlay_network }}
+    environment:
+      MYSQL_ROOT_PASSWORD: "{{ db_root_password }}"
+      MYSQL_DATABASE: "{{ db_name }}"
+      MYSQL_USER: "{{ db_user }}"
+      MYSQL_PASSWORD: "{{ db_password }}"
+      GALERA_CLUSTER_NAME: "{{ db_galera_cluster_name }}"
+      GALERA_CLUSTER_ADDRESS: "gcomm://db1,db2,db3"
+      GALERA_BOOTSTRAP: "no"
+      GALERA_NODE_NAME: "db3"
+      GALERA_NODE_ADDRESS: "db3"
+      GALERA_MARIABACKUP_USER: "{{ db_mariabackup_user }}"
+      GALERA_MARIABACKUP_PASSWORD: "{{ db_mariabackup_password }}"
+    volumes:
+      - db3_data:/var/lib/mysql
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 10s
+      placement:
+        constraints:
+          - node.hostname == {{ db_node_3 }}
+
+  db-lb:
+    image: {{ haproxy_image }}
+    networks:
+      - {{ db_overlay_network }}
+    configs:
+      - source: db_haproxy_cfg
+        target: /usr/local/etc/haproxy/haproxy.cfg
+    ports:
+      - target: 3306
+        published: {{ db_public_port }}
+        protocol: tcp
+        mode: ingress
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+      placement:
+        constraints:
+          - node.role == manager
+
+networks:
+  {{ db_overlay_network }}:
+    driver: overlay
+    attachable: true
+
+volumes:
+  db1_data:
+  db2_data:
+  db3_data:
+
+configs:
+  db_haproxy_cfg:
+    file: {{ swarm_remote_dir }}/haproxy.cfg

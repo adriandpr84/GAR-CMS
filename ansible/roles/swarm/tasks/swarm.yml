@@ -1,0 +1,98 @@
+---
+# ==============================================================
+# Creación idempotente del clúster Docker Swarm
+# ============================================================== 
+
+- name: "Swarm: comprobar estado local del nodo"
+  shell: "docker info --format '{% raw %}{{.Swarm.LocalNodeState}}{% endraw %}'"
+  register: swarm_local_state
+  changed_when: false
+  failed_when: false
+
+- name: "Swarm: inicializar manager principal"
+  shell: >-
+    docker swarm init
+    --advertise-addr {{ hostvars[swarm_manager_primary].ansible_host }}
+    --listen-addr {{ hostvars[swarm_manager_primary].ansible_host }}:2377
+  when:
+    - inventory_hostname == swarm_manager_primary
+    - swarm_local_state.stdout != "active"
+  register: swarm_init_result
+
+- name: "Swarm: obtener token para managers"
+  shell: docker swarm join-token -q manager
+  register: swarm_manager_token_result
+  changed_when: false
+  delegate_to: "{{ swarm_manager_primary }}"
+  run_once: true
+
+- name: "Swarm: obtener token para workers"
+  shell: docker swarm join-token -q worker
+  register: swarm_worker_token_result
+  changed_when: false
+  delegate_to: "{{ swarm_manager_primary }}"
+  run_once: true
+
+- name: "Swarm: unir managers secundarios"
+  shell: >-
+    docker swarm join
+    --token {{ swarm_manager_token_result.stdout }}
+    --advertise-addr {{ ansible_host }}
+    {{ hostvars[swarm_manager_primary].ansible_host }}:2377
+  when:
+    - inventory_hostname in swarm_manager_hosts
+    - inventory_hostname != swarm_manager_primary
+    - swarm_local_state.stdout != "active"
+
+- name: "Swarm: unir workers"
+  shell: >-
+    docker swarm join
+    --token {{ swarm_worker_token_result.stdout }}
+    --advertise-addr {{ ansible_host }}
+    {{ hostvars[swarm_manager_primary].ansible_host }}:2377
+  when:
+    - inventory_hostname in swarm_worker_hosts
+    - swarm_local_state.stdout != "active"
+
+- name: "Swarm: esperar a que todos los nodos aparezcan en el manager principal"
+  shell: "docker node ls --format '{% raw %}{{.Hostname}}{% endraw %}' | grep -x '{{ item }}'"
+  register: swarm_node_wait
+  retries: "{{ swarm_wait_retries }}"
+  delay: "{{ swarm_wait_delay }}"
+  until: swarm_node_wait.rc == 0
+  changed_when: false
+  delegate_to: "{{ swarm_manager_primary }}"
+  run_once: true
+  loop: "{{ swarm_manager_hosts + swarm_worker_hosts }}"
+
+- name: "Swarm: etiquetar nodos de base de datos"
+  shell: >-
+    docker node update
+    --label-add gar.role=database
+    --label-add gar.db=true
+    {{ item }}
+  delegate_to: "{{ swarm_manager_primary }}"
+  run_once: true
+  loop:
+    - "{{ db_node_1 }}"
+    - "{{ db_node_2 }}"
+    - "{{ db_node_3 }}"
+  changed_when: false
+
+- name: "Swarm: etiquetar manager principal"
+  shell: "docker node update --label-add gar.manager.primary=true {{ swarm_manager_primary }}"
+  delegate_to: "{{ swarm_manager_primary }}"
+  run_once: true
+  changed_when: false
+
+- name: "Swarm: mostrar nodos del clúster"
+  shell: "docker node ls"
+  register: swarm_nodes_result
+  changed_when: false
+  delegate_to: "{{ swarm_manager_primary }}"
+  run_once: true
+
+- name: "Swarm: salida de docker node ls"
+  debug:
+    var: swarm_nodes_result.stdout_lines
+  run_once: true

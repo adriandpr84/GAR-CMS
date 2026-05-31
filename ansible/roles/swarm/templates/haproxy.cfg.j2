@@ -1,0 +1,22 @@
+global
+    log stdout format raw local0
+    maxconn 2048
+
+defaults
+    log global
+    mode tcp
+    option tcplog
+    option tcp-check
+    timeout connect 10s
+    timeout client 1m
+    timeout server 1m
+
+frontend mysql_front
+    bind *:3306
+    default_backend galera_back
+
+backend galera_back
+    balance roundrobin
+    server db1 db1:3306 check inter 5s fall 3 rise 2
+    server db2 db2:3306 check inter 5s fall 3 rise 2
+    server db3 db3:3306 check inter 5s fall 3 rise 2

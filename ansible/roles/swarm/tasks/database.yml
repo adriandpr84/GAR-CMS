@@ -1,0 +1,93 @@
+---
+# ==============================================================
+# Despliegue de MariaDB Galera + HAProxy sobre Docker Swarm
+# ============================================================== 
+
+
+- name: "DB Image: crear directorio de construcción en todos los nodos"
+  file:
+    path: "{{ db_build_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: "DB Image: copiar Dockerfile de MariaDB Galera"
+  template:
+    src: Dockerfile.mariadb-galera.j2
+    dest: "{{ db_build_dir }}/Dockerfile"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: "DB Image: copiar entrypoint de MariaDB Galera"
+  template:
+    src: docker-entrypoint-galera.sh.j2
+    dest: "{{ db_build_dir }}/docker-entrypoint-galera.sh"
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: "DB Image: construir imagen local en cada nodo"
+  shell: "docker build -t {{ db_image }} {{ db_build_dir }}"
+  register: db_image_build_result
+  changed_when: "'Successfully built' in db_image_build_result.stdout or 'Successfully tagged' in db_image_build_result.stdout"
+
+- name: "DB: crear directorio remoto de trabajo en el manager principal"
+  file:
+    path: "{{ swarm_remote_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  delegate_to: "{{ swarm_manager_primary }}"
+  run_once: true
+
+- name: "DB: copiar configuración de HAProxy"
+  template:
+    src: haproxy.cfg.j2
+    dest: "{{ swarm_remote_dir }}/haproxy.cfg"
+    owner: root
+    group: root
+    mode: '0644'
+  delegate_to: "{{ swarm_manager_primary }}"
+  run_once: true
+
+- name: "DB: copiar stack de MariaDB Galera"
+  template:
+    src: mariadb-galera-stack.yml.j2
+    dest: "{{ swarm_remote_dir }}/mariadb-galera-stack.yml"
+    owner: root
+    group: root
+    mode: '0644'
+  delegate_to: "{{ swarm_manager_primary }}"
+  run_once: true
+
+- name: "DB: desplegar stack en Docker Swarm"
+  shell: "docker stack deploy --resolve-image never -c {{ swarm_remote_dir }}/mariadb-galera-stack.yml {{ db_stack_name }}"
+  delegate_to: "{{ swarm_manager_primary }}"
+  run_once: true
+  register: db_stack_deploy_result
+  changed_when: "'Creating' in db_stack_deploy_result.stdout or 'Updating' in db_stack_deploy_result.stdout"
+
+- name: "DB: esperar a que existan los servicios del stack"
+  shell: "docker stack services {{ db_stack_name }} --format '{% raw %}{{.Name}}{% endraw %}' | wc -l"
+  register: db_services_count
+  retries: "{{ swarm_wait_retries }}"
+  delay: "{{ swarm_wait_delay }}"
+  until: db_services_count.stdout | int >= 4
+  changed_when: false
+  delegate_to: "{{ swarm_manager_primary }}"
+  run_once: true
+
+- name: "DB: mostrar servicios desplegados"
+  shell: "docker stack services {{ db_stack_name }}"
+  register: db_services_result
+  changed_when: false
+  delegate_to: "{{ swarm_manager_primary }}"
+  run_once: true
+
+- name: "DB: salida de docker stack services"
+  debug:
+    var: db_services_result.stdout_lines
+  run_once: true

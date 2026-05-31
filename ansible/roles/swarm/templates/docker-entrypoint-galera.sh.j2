@@ -1,0 +1,92 @@
+#!/bin/bash
+set -euo pipefail
+
+DATADIR="/var/lib/mysql"
+SOCKET="/tmp/mysql-init.sock"
+PIDFILE="/tmp/mysql-init.pid"
+CONF_FILE="/etc/mysql/mariadb.conf.d/60-galera.cnf"
+
+MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-rootpass}"
+MYSQL_DATABASE="${MYSQL_DATABASE:-cmsdb}"
+MYSQL_USER="${MYSQL_USER:-cmsuser}"
+MYSQL_PASSWORD="${MYSQL_PASSWORD:-cmspass}"
+GALERA_CLUSTER_NAME="${GALERA_CLUSTER_NAME:-gar_galera_cluster}"
+GALERA_CLUSTER_ADDRESS="${GALERA_CLUSTER_ADDRESS:-gcomm://db1,db2,db3}"
+GALERA_BOOTSTRAP="${GALERA_BOOTSTRAP:-no}"
+GALERA_NODE_NAME="${GALERA_NODE_NAME:-${HOSTNAME}}"
+GALERA_NODE_ADDRESS="${GALERA_NODE_ADDRESS:-${HOSTNAME}}"
+GALERA_MARIABACKUP_USER="${GALERA_MARIABACKUP_USER:-mariabackup}"
+GALERA_MARIABACKUP_PASSWORD="${GALERA_MARIABACKUP_PASSWORD:-backuppass}"
+
+mkdir -p /var/run/mysqld "$DATADIR"
+chown -R mysql:mysql /var/run/mysqld "$DATADIR"
+
+cat > "$CONF_FILE" <<CFG
+[mysqld]
+bind-address=0.0.0.0
+binlog_format=ROW
+default_storage_engine=InnoDB
+innodb_autoinc_lock_mode=2
+
+wsrep_on=ON
+wsrep_provider=/usr/lib/galera/libgalera_smm.so
+wsrep_cluster_name=${GALERA_CLUSTER_NAME}
+wsrep_cluster_address=${GALERA_CLUSTER_ADDRESS}
+wsrep_node_name=${GALERA_NODE_NAME}
+wsrep_node_address=${GALERA_NODE_ADDRESS}
+wsrep_sst_method=mariabackup
+wsrep_sst_auth=${GALERA_MARIABACKUP_USER}:${GALERA_MARIABACKUP_PASSWORD}
+
+[client]
+user=root
+password=${MYSQL_ROOT_PASSWORD}
+CFG
+
+if [ ! -d "$DATADIR/mysql" ]; then
+  echo "Inicializando datadir de MariaDB en $DATADIR"
+  mariadb-install-db --user=mysql --datadir="$DATADIR" --auth-root-authentication-method=normal >/dev/null
+
+  echo "Arrancando MariaDB temporal para crear usuarios y base de datos"
+  mariadbd \
+    --user=mysql \
+    --datadir="$DATADIR" \
+    --skip-networking \
+    --socket="$SOCKET" \
+    --pid-file="$PIDFILE" \
+    --wsrep_on=OFF &
+
+  for i in $(seq 1 60); do
+    if mariadb-admin --socket="$SOCKET" --user=root ping >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
+
+  mariadb --socket="$SOCKET" --user=root <<SQL
+ALTER USER 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PASSWORD}';
+CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED BY '${MYSQL_ROOT_PASSWORD}';
+GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION;
+CREATE DATABASE IF NOT EXISTS \`${MYSQL_DATABASE}\`;
+CREATE USER IF NOT EXISTS '${MYSQL_USER}'@'%' IDENTIFIED BY '${MYSQL_PASSWORD}';
+GRANT ALL PRIVILEGES ON \`${MYSQL_DATABASE}\`.* TO '${MYSQL_USER}'@'%';
+CREATE USER IF NOT EXISTS '${GALERA_MARIABACKUP_USER}'@'%' IDENTIFIED BY '${GALERA_MARIABACKUP_PASSWORD}';
+GRANT ALL PRIVILEGES ON *.* TO '${GALERA_MARIABACKUP_USER}'@'%';
+FLUSH PRIVILEGES;
+SQL
+
+  mariadb-admin --socket="$SOCKET" --user=root --password="${MYSQL_ROOT_PASSWORD}" shutdown
+fi
+
+EXTRA_ARGS=()
+
+# Solo el primer arranque de db1 crea el clúster.
+# En reinicios posteriores intenta unirse al clúster existente para evitar split-brain.
+if [ "$GALERA_BOOTSTRAP" = "yes" ] && [ ! -f "$DATADIR/.galera_bootstrapped" ]; then
+  echo "Bootstrap inicial del clúster Galera en ${GALERA_NODE_NAME}"
+  touch "$DATADIR/.galera_bootstrapped"
+  chown mysql:mysql "$DATADIR/.galera_bootstrapped"
+  EXTRA_ARGS+=("--wsrep-new-cluster")
+fi
+
+echo "Arrancando MariaDB Galera: nodo=${GALERA_NODE_NAME}, cluster=${GALERA_CLUSTER_NAME}, address=${GALERA_CLUSTER_ADDRESS}"
+exec mariadbd --user=mysql --datadir="$DATADIR" "${EXTRA_ARGS[@]}"

@@ -1,0 +1,72 @@
+---
+# ==============================================================
+# Rol 3 — Docker Swarm + MariaDB Galera HA
+# Variables por defecto del rol.
+# ==============================================================
+
+# Nodos del clúster Swarm
+swarm_manager_primary: cluster-master-1
+swarm_manager_hosts:
+  - cluster-master-1
+  - cluster-master-2
+swarm_worker_hosts:
+  - cluster-worker-1
+  - cluster-worker-2
+
+# Red interna usada por los nodos del clúster
+swarm_advertise_addr: "{{ ansible_host }}"
+swarm_listen_addr: "{{ ansible_host }}:2377"
+swarm_manager_port: 2377
+swarm_overlay_tcp_udp_port: 7946
+swarm_vxlan_port: 4789
+
+# Paquetes base
+swarm_docker_packages:
+  - docker.io
+  - python3
+  - python3-pip
+  - python3-docker
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+  - mariadb-client
+
+# Usuario normal creado por el autoinstall del jumpstart
+swarm_admin_user: admin
+
+# Base de datos HA
+# IMPORTANTE: son contraseñas de laboratorio. Cambiarlas en producción.
+db_stack_name: gar_db
+db_overlay_network: gar_db_net
+db_image: gar/mariadb-galera:1.0
+haproxy_image: haproxy:2.9
+
+db_root_password: GarRootPass2026!
+db_name: cmsdb
+db_user: cmsuser
+db_password: CmsPass2026!
+db_mariabackup_user: mariabackup
+db_mariabackup_password: BackupPass2026!
+db_replication_user: replicator
+db_replication_password: ReplicationPass2026!
+db_galera_cluster_name: gar_galera_cluster
+
+# Tres réplicas SQL reales, cada una fijada a un nodo distinto.
+# El cuarto nodo queda disponible para Swarm, failover y otros servicios.
+db_node_1: cluster-master-1
+db_node_2: cluster-master-2
+db_node_3: cluster-worker-1
+
+# Puerto SQL publicado por HAProxy dentro del Swarm.
+db_public_port: 3306
+
+# Directorio donde se dejan los ficheros renderizados en el manager principal
+swarm_remote_dir: /opt/gar/swarm
+
+# Directorio usado para construir la imagen local de MariaDB Galera
+db_build_dir: /opt/gar/mariadb-galera-image
+
+# Esperas básicas
+swarm_wait_retries: 30
+swarm_wait_delay: 5

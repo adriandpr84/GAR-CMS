@@ -1,0 +1,49 @@
+---
+# ==============================================================
+# Instalación de Docker en los 4 nodos del grupo cluster
+# ============================================================== 
+
+- name: "APT: actualizar caché"
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: "Docker: instalar paquetes necesarios"
+  apt:
+    name: "{{ swarm_docker_packages }}"
+    state: present
+
+- name: "Docker: asegurar servicio arrancado y habilitado"
+  service:
+    name: docker
+    state: started
+    enabled: yes
+
+- name: "Docker: añadir usuario admin al grupo docker"
+  user:
+    name: "{{ swarm_admin_user }}"
+    groups: docker
+    append: yes
+  when: swarm_admin_user is defined
+
+- name: "Firewall: permitir puertos de Docker Swarm si UFW está instalado"
+  shell: |
+    if command -v ufw >/dev/null 2>&1; then
+      ufw allow {{ swarm_manager_port }}/tcp
+      ufw allow {{ swarm_overlay_tcp_udp_port }}/tcp
+      ufw allow {{ swarm_overlay_tcp_udp_port }}/udp
+      ufw allow {{ swarm_vxlan_port }}/udp
+      ufw allow {{ db_public_port }}/tcp
+    fi
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: "Docker: comprobar versión instalada"
+  command: docker --version
+  register: docker_version_result
+  changed_when: false
+
+- name: "Docker: mostrar versión"
+  debug:
+    msg: "{{ inventory_hostname }} -> {{ docker_version_result.stdout }}"

@@ -1,0 +1,16 @@
+---
+# ==============================================================
+# Rol 3 — Docker Swarm + Base de Datos HA
+# ==============================================================
+
+- name: "Docker: instalar y preparar Docker en todos los nodos"
+  import_tasks: docker.yml
+
+- name: "Swarm: crear el clúster y unir managers/workers"
+  import_tasks: swarm.yml
+
+- name: "Database HA: desplegar MariaDB Galera en Docker Swarm"
+  import_tasks: database.yml
+
+- name: "Verificación: mostrar estado final del rol"
+  import_tasks: verify.yml

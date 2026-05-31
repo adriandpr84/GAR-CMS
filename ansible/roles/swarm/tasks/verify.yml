@@ -1,0 +1,37 @@
+---
+# ==============================================================
+# Verificaciones finales del Rol 3
+# ============================================================== 
+
+- name: "Verificación: comprobar estado Docker Swarm"
+  shell: "docker info --format 'Swarm={% raw %}{{.Swarm.LocalNodeState}}{% endraw %}'"
+  register: verify_swarm_state
+  changed_when: false
+
+- name: "Verificación: estado local de cada nodo"
+  debug:
+    msg: "{{ inventory_hostname }} -> {{ verify_swarm_state.stdout }}"
+
+- name: "Verificación: resumen de nodos"
+  shell: "docker node ls"
+  register: verify_nodes
+  changed_when: false
+  delegate_to: "{{ swarm_manager_primary }}"
+  run_once: true
+
+- name: "Verificación: resumen de servicios"
+  shell: "docker service ls"
+  register: verify_services
+  changed_when: false
+  delegate_to: "{{ swarm_manager_primary }}"
+  run_once: true
+
+- name: "Verificación: mostrar nodos"
+  debug:
+    var: verify_nodes.stdout_lines
+  run_once: true
+
+- name: "Verificación: mostrar servicios"
+  debug:
+    var: verify_services.stdout_lines
+  run_once: true
