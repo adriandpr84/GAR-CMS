@@ -1,0 +1,8 @@
+# Configuracion de agente SNMP — Gestionado por el Rol 5
+agentaddress udp:161,udp6:[::]:161
+
+# Permitir acceso de lectura a la comunidad desde la subred local de este nodo de forma dinamica
+rocommunity comunidad-gar {{ ansible_default_ipv4.network }}/{{ ansible_default_ipv4.netmask }}
+
+syslocation Laboratorio_GAR_VirtualBox
+syscontact equipo5@gar.local
