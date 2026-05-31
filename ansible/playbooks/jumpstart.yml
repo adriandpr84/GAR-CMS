@@ -179,6 +179,32 @@
         ssh_key_bits: 2048
         ssh_key_file: .ssh/id_rsa
 
+    - name: "SSH: Asegurar directorio .ssh para admin"
+      file:
+        path: /home/admin/.ssh
+        state: directory
+        owner: admin
+        group: admin
+        mode: '0700'
+
+    - name: "SSH: Copiar clave privada de root a admin"
+      copy:
+        src: /root/.ssh/id_rsa
+        dest: /home/admin/.ssh/id_rsa
+        owner: admin
+        group: admin
+        mode: '0600'
+        remote_src: yes
+
+    - name: "SSH: Copiar clave publica de root a admin"
+      copy:
+        src: /root/.ssh/id_rsa.pub
+        dest: /home/admin/.ssh/id_rsa.pub
+        owner: admin
+        group: admin
+        mode: '0644'
+        remote_src: yes
+
     - name: "ORQUESTADOR: Generar configuraciones finales (PXE/DHCP/Autoinstall)"
       command: "python3 provisioner.py generate-configs"
       args:

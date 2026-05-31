@@ -48,7 +48,7 @@ autoinstall:
   storage:
     layout:
       name: direct
-  updates: none
+  updates: security
   late-commands:
     - "curtin in-target systemctl disable apt-daily.timer apt-daily-upgrade.timer"
     - "curtin in-target systemctl disable unattended-upgrades.service"

@@ -1,0 +1,31 @@
+server {
+    listen 80;
+    server_name _;
+    
+    # Raíz del CMS en el volumen compartido de GlusterFS (preparado por el Rol 4)
+    root /var/www/cms_shared;
+    index index.php index.html index.htm;
+
+    # Logs de acceso y error
+    access_log /var/log/nginx/cms_access.log;
+    error_log /var/log/nginx/cms_error.log;
+
+    # Bloque principal para URLs amigables de WordPress
+    location / {
+        try_files $uri $uri/ /index.php?$args;
+    }
+
+    # Bloque para procesar archivos PHP
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        # Ubuntu 22.04 usa PHP 8.1 por defecto
+        fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        include fastcgi_params;
+    }
+
+    # Denegar acceso a archivos ocultos (seguridad)
+    location ~ /\.ht {
+        deny all;
+    }
+}

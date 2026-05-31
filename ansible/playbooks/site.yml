@@ -23,7 +23,7 @@
   hosts: web_frontends
   become: yes
   roles:
-    - role: cms          # pendiente — Rol 2
+    - role: cms
   tags: cms
 
 # ── Rol 3: Clustering & Database HA ───────────────────────────
