@@ -18,13 +18,13 @@
     - role: loadbalancer
   tags: loadbalancer
 
-# ── Rol 2: Web Layer & CMS ────────────────────────────────────
-- name: "Rol 2 — Web Frontends (Nginx + CMS)"
-  hosts: web_frontends
+# ── Rol 2: Storage & Redundancy (GlusterFS) ───────────────────
+- name: "Rol 2 — Almacenamiento compartido (GlusterFS)"
+  hosts: storage, web_frontends
   become: yes
   roles:
-    - role: cms
-  tags: cms
+    - role: storage
+  tags: storage
 
 # ── Rol 3: Clustering & Database HA ───────────────────────────
 - name: "Rol 3 — Docker Swarm + Base de datos HA"
@@ -34,13 +34,13 @@
     - role: swarm        # pendiente — Rol 3
   tags: swarm
 
-# ── Rol 4: Storage & Redundancy ───────────────────────────────
-- name: "Rol 4 — Almacenamiento compartido (GlusterFS)"
-  hosts: storage, web_frontends
+# ── Rol 4: Web Layer & CMS ────────────────────────────────────
+- name: "Rol 4 — Web Frontends (Nginx + CMS)"
+  hosts: web_frontends
   become: yes
   roles:
-    - role: storage      # pendiente — Rol 4
-  tags: storage
+    - role: cms
+  tags: cms
 
 # ── Rol 5: Observability & Hotdesks ───────────────────────────
 - name: "Rol 5 — Monitorización (CheckMK + SNMP) y Hotdesks"
