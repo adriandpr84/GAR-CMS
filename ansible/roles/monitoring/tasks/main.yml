@@ -24,28 +24,7 @@
     state: started
     enabled: yes
 
-# ==============================================================
-# 2. BLOQUE ESPECÍFICO: SOLO PARA LOS 8 HOTDESKS
-# ==============================================================
 
-- name: "[Hotdesks] Crear el usuario de sistema para alumnos"
-  ansible.builtin.user:
-    name: alumno
-    comment: "Usuario Estudiante GAR"
-    shell: /bin/bash
-    groups: sudo
-    append: yes
-  when: "'hotdesk' in inventory_hostname"
-
-- name: "[Hotdesks] Instalar herramientas esenciales de diagnostico de red"
-  ansible.builtin.apt:
-    name:
-      - curl
-      - net-tools
-      - traceroute
-      - tmux
-    state: present
-  when: "'hotdesk' in inventory_hostname"
 
 # ==============================================================
 # 3. BLOQUE ESPECÍFICO: SOLO PARA EL SERVIDOR MONITORING

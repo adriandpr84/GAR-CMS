@@ -1,0 +1,21 @@
+---
+# ==============================================================
+# Rol 6: Puestos de trabajo (Hotdesks)
+# ==============================================================
+
+- name: "[Hotdesks] Crear el usuario de sistema para alumnos"
+  ansible.builtin.user:
+    name: alumno
+    comment: "Usuario Estudiante GAR"
+    shell: /bin/bash
+    groups: sudo
+    append: yes
+
+- name: "[Hotdesks] Instalar herramientas esenciales de diagnostico de red"
+  ansible.builtin.apt:
+    name:
+      - curl
+      - net-tools
+      - traceroute
+      - tmux
+    state: present

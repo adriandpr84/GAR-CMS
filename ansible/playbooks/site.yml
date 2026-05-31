@@ -12,15 +12,15 @@
 
 # ── Rol 1: Network & Edge Security ────────────────────────────
 - name: "Rol 1 — Load Balancer (Nginx + NAT + UFW)"
-  hosts: load_balancer
+  hosts: load-balancer
   become: yes
   roles:
-    - role: loadbalancer
-  tags: loadbalancer
+    - role: load-balancer
+  tags: load-balancer
 
 # ── Rol 2: Storage & Redundancy (GlusterFS) ───────────────────
 - name: "Rol 2 — Almacenamiento compartido (GlusterFS)"
-  hosts: storage, web_frontends
+  hosts: storage, web-frontend
   become: yes
   roles:
     - role: storage
@@ -28,24 +28,32 @@
 
 # ── Rol 3: Clustering & Database HA ───────────────────────────
 - name: "Rol 3 — Docker Swarm + Base de datos HA"
-  hosts: cluster
+  hosts: cluster-node
   become: yes
   roles:
-    - role: swarm        # pendiente — Rol 3
-  tags: swarm
+    - role: cluster-node
+  tags: cluster-node
 
 # ── Rol 4: Web Layer & CMS ────────────────────────────────────
 - name: "Rol 4 — Web Frontends (Nginx + CMS)"
-  hosts: web_frontends
+  hosts: web-frontend
   become: yes
   roles:
-    - role: cms
-  tags: cms
+    - role: web-frontend
+  tags: web-frontend
 
-# ── Rol 5: Observability & Hotdesks ───────────────────────────
-- name: "Rol 5 — Monitorización (CheckMK + SNMP) y Hotdesks"
-  hosts: monitoring, hotdesks
+# ── Rol 5: Observability ────────────────────────────────────────
+- name: "Rol 5 — Monitorización (CheckMK + SNMP)"
+  hosts: monitoring
   become: yes
   roles:
-    - role: monitoring   # pendiente — Rol 5
+    - role: monitoring
   tags: monitoring
+
+# ── Rol 6: Hotdesks ───────────────────────────────────────────
+- name: "Rol 6 — Puestos de trabajo (Hotdesks)"
+  hosts: hotdesk
+  become: yes
+  roles:
+    - role: hotdesk
+  tags: hotdesk
