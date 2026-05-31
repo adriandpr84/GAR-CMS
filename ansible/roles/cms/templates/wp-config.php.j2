@@ -1,0 +1,57 @@
+<?php
+/**
+ * Configuración base de WordPress.
+ * Las variables apuntarán al clúster de Base de Datos (Rol 3).
+ */
+
+// ** Ajustes de MySQL - Puedes obtener esta información de tu proveedor de alojamiento web ** //
+define( 'DB_NAME', '{{ db_name | default("wordpress") }}' );
+define( 'DB_USER', '{{ db_user | default("wp_user") }}' );
+define( 'DB_PASSWORD', '{{ db_password | default("wp_pass") }}' );
+
+# Usaremos la IP del cluster master 1 como Host por defecto hasta que Role 3 ponga un HAProxy interno
+define( 'DB_HOST', '{{ db_host | default("192.168.2.11") }}' );
+
+define( 'DB_CHARSET', 'utf8' );
+define( 'DB_COLLATE', '' );
+
+/**#@+
+ * Claves únicas de autenticación y sales.
+ * Cámbialas a diferentes frases únicas.
+ */
+define('AUTH_KEY',         'x&[SjO)T.c*yGZ{g0^!s,m]D~f3q9/`>kR|+E}U@8X#h|?v-1<W=6%;(5_ N,aP$');
+define('SECURE_AUTH_KEY',  'u>+t{0?+3%1|2$H(z%pM=v|g6f,t&h!|;3@*s9:1_X8`4^|k7(5~=,O#y+w1!V4');
+define('LOGGED_IN_KEY',    'g7_D&v.6*!2?Z@!9(m^}0;`$x,1[|8~4:k5=u3+O_>w?^h/|6!y+;T#P!z_2_Q<');
+define('NONCE_KEY',        '1^>_`x2+O@;?0-5=k~8!y(6,3!9|z|T*v.w{h_4_S#g$u_1;P%D!Z_m(R^?+!3*');
+define('AUTH_SALT',        '^4_w!3(5,y`0=T.6~k@8_?1+x:O!z^v_2;m|g&h*u<S(D(9!1|7[>_P!$!Z_R^;');
+define('SECURE_AUTH_SALT', '3?6_9!O(z^m_`4=y!k_8.T_u_1+x>w,v_2;S|g&h!1<P(D*5~0!7[>_R!$!Z^?_');
+define('LOGGED_IN_SALT',   '1=O_3(5,y`0!T.6~k@8_?1+x:O!z^v_2;m|g&h*u<S(D(9!1|7[>_P!$!Z_R^;!');
+define('NONCE_SALT',       'w!3(5,y`0=T.6~k@8_?1+x:O!z^v_2;m|g&h*u<S(D(9!1|7[>_P!$!Z_R^;!1!');
+/**#@-*/
+
+/**
+ * Prefijo de la base de datos de WordPress.
+ */
+$table_prefix = 'wp_';
+
+/**
+ * Para desarrolladores: modo de depuración de WordPress.
+ */
+define( 'WP_DEBUG', false );
+
+/**
+ * Redirigir siempre a HTTP (el SSL lo gestionará el load balancer Rol 1)
+ * Así evitamos que WordPress haga redirecciones infinitas.
+ */
+if (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] == 'https')
+    $_SERVER['HTTPS'] = 'on';
+
+/* ¡Eso es todo, deja de editar! Feliz publicación. */
+
+/** Ruta absoluta al directorio de WordPress. */
+if ( ! defined( 'ABSPATH' ) ) {
+	define( 'ABSPATH', __DIR__ . '/' );
+}
+
+/** Configura las variables y archivos de WordPress. */
+require_once ABSPATH . 'wp-settings.php';

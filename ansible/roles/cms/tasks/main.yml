@@ -1,0 +1,65 @@
+---
+# ansible/roles/cms/tasks/main.yml
+
+- name: "Instalar Nginx y dependencias de PHP para WordPress"
+  apt:
+    name:
+      - nginx
+      - php-fpm
+      - php-mysql
+      - php-curl
+      - php-gd
+      - php-xml
+      - php-mbstring
+      - curl
+      - tar
+      - unzip
+    state: present
+    update_cache: yes
+
+- name: "Eliminar sitio por defecto de Nginx"
+  file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Reiniciar Nginx
+
+- name: "Configurar el virtual host del CMS"
+  template:
+    src: nginx_cms.conf.j2
+    dest: /etc/nginx/sites-available/cms
+  notify: Reiniciar Nginx
+
+- name: "Activar el sitio del CMS"
+  file:
+    src: /etc/nginx/sites-available/cms
+    dest: /etc/nginx/sites-enabled/cms
+    state: link
+  notify: Reiniciar Nginx
+
+- name: "Asegurar que el directorio base del CMS existe"
+  file:
+    path: /var/www/cms_shared
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: '0775'
+
+- name: "Descargar y extraer WordPress en el disco compartido"
+  unarchive:
+    src: https://wordpress.org/latest.tar.gz
+    dest: /var/www/cms_shared/
+    remote_src: yes
+    extra_opts: [--strip-components=1]
+    creates: /var/www/cms_shared/wp-settings.php
+    owner: www-data
+    group: www-data
+  run_once: true
+
+- name: "Inyectar configuración de base de datos (wp-config.php)"
+  template:
+    src: wp-config.php.j2
+    dest: /var/www/cms_shared/wp-config.php
+    owner: www-data
+    group: www-data
+    mode: '0644'
+  run_once: true

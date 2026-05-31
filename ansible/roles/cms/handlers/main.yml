@@ -1,0 +1,12 @@
+---
+# ansible/roles/cms/handlers/main.yml
+
+- name: Reiniciar Nginx
+  service:
+    name: nginx
+    state: restarted
+
+- name: Reiniciar PHP-FPM
+  service:
+    name: php8.1-fpm
+    state: restarted
