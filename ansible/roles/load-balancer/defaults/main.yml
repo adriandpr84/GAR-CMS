@@ -5,12 +5,14 @@
 # ============================================================
 
 # Interfaces de red del nodo
-lb_iface_main: "enp0s3"   # NIC conectada a intnet_main (192.168.1.0/24)
-lb_iface_nat:  "enp0s8"   # NIC NAT (salida a internet)
+lb_iface_main: "enp0s3"       # NIC conectada a intnet_main (192.168.1.0/24)
+lb_iface_nat:  "enp0s8"       # NIC NAT (salida a internet)
+lb_iface_internal: "enp0s9"   # NIC conectada a intnet_internal (192.168.2.0/24)
 
 # Puertos que Nginx expone al exterior
 lb_http_port:  80
 lb_https_port: 443
 
-# Subred main (para las reglas de NAT y UFW)
+# Subredes (para las reglas de NAT, FORWARD y UFW)
 lb_main_subnet: "192.168.1.0/24"
+lb_internal_subnet: "192.168.2.0/24"

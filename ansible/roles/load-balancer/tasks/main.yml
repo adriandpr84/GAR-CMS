@@ -43,6 +43,22 @@
     jump: ACCEPT
   notify: Guardar reglas de iptables
 
+- name: "ROUTING: Permitir FORWARD de main hacia internal (Req 7)"
+  iptables:
+    chain: FORWARD
+    in_interface: "{{ lb_iface_main }}"
+    out_interface: "{{ lb_iface_internal }}"
+    jump: ACCEPT
+  notify: Guardar reglas de iptables
+
+- name: "ROUTING: Permitir FORWARD de internal hacia main (Req 8)"
+  iptables:
+    chain: FORWARD
+    in_interface: "{{ lb_iface_internal }}"
+    out_interface: "{{ lb_iface_main }}"
+    jump: ACCEPT
+  notify: Guardar reglas de iptables
+
 - name: "NAT: Permitir tráfico de retorno (ESTABLISHED/RELATED)"
   iptables:
     chain: FORWARD
@@ -124,3 +140,33 @@
 - name: "UFW: Habilitar el firewall"
   ufw:
     state: enabled
+
+# ------------------------------------------------------------------
+# BLOQUE 4: BASTION HOST (Req. 14)
+# Como el jumpstart se puede apagar, el Load Balancer hereda su 
+# identidad SSH para poder administrar el resto del clúster.
+# ------------------------------------------------------------------
+
+- name: "SSH: Crear directorio .ssh para admin"
+  file:
+    path: /home/admin/.ssh
+    state: directory
+    mode: '0700'
+    owner: admin
+    group: admin
+
+- name: "SSH: Copiar clave privada del Jumpstart al Load Balancer"
+  copy:
+    src: /home/admin/.ssh/id_rsa
+    dest: /home/admin/.ssh/id_rsa
+    mode: '0600'
+    owner: admin
+    group: admin
+
+- name: "SSH: Copiar clave pública del Jumpstart al Load Balancer"
+  copy:
+    src: /home/admin/.ssh/id_rsa.pub
+    dest: /home/admin/.ssh/id_rsa.pub
+    mode: '0644'
+    owner: admin
+    group: admin
