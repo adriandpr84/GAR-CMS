@@ -1,13 +1,13 @@
 ---
 # ansible/roles/storage/tasks/server.yml
 
-- name: Instalar servidor GlusterFS
+- name: "Instalar servidor GlusterFS"
   apt:
     name: glusterfs-server
     state: present
     update_cache: yes
 
-- name: UFW: Abrir puertos para GlusterFS
+- name: "UFW: Abrir puertos para GlusterFS"
   community.general.ufw:
     rule: allow
     port: "{{ item }}"
@@ -17,19 +17,19 @@
     - '24008'
     - '49152:49160'
 
-- name: Asegurar que el servicio GlusterFS está iniciado y habilitado
+- name: "Asegurar que el servicio GlusterFS está iniciado y habilitado"
   service:
     name: glusterd
     state: started
     enabled: yes
 
-- name: Crear directorio para el "brick" (ladrillo de almacenamiento) de Gluster
+- name: "Crear directorio para el brick de Gluster"
   file:
     path: /gluster/brick1
     state: directory
     mode: '0755'
 
-- name: Crear e iniciar el volumen GlusterFS (gv0)
+- name: "Crear e iniciar el volumen GlusterFS (gv0)"
   gluster_volume:
     state: started
     name: gv0
