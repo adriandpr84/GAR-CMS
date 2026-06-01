@@ -65,3 +65,14 @@
   roles:
     - role: hotdesk
   tags: hotdesk
+
+# ── Rol 7: Security Lockdown ──────────────────────────────────
+- name: "Rol 7 — Seguridad final (Sudo Lockdown)"
+  hosts: all
+  become: yes
+  tasks:
+    - name: "SEGURIDAD: Eliminar permisos NOPASSWD temporales de sudo"
+      file:
+        path: "/etc/sudoers.d/99-{{ ansible_user }}-nopasswd"
+        state: absent
+  tags: lockdown
