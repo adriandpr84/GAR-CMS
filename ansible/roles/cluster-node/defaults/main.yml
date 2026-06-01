@@ -5,13 +5,9 @@
 # ==============================================================
 
 # Nodos del clúster Swarm
-swarm_manager_primary: cluster-master-1
-swarm_manager_hosts:
-  - cluster-master-1
-  - cluster-master-2
-swarm_worker_hosts:
-  - cluster-worker-1
-  - cluster-worker-2
+swarm_manager_primary: "{{ groups['cluster-node'][0] }}"
+swarm_manager_hosts: "{{ groups['cluster-node'][:2] }}"
+swarm_worker_hosts: "{{ groups['cluster-node'][2:] }}"
 
 # Red interna usada por los nodos del clúster
 swarm_advertise_addr: "{{ ansible_host }}"
@@ -53,10 +49,10 @@ db_replication_password: ReplicationPass2026!
 db_galera_cluster_name: gar_galera_cluster
 
 # Tres réplicas SQL reales, cada una fijada a un nodo distinto.
-# El cuarto nodo queda disponible para Swarm, failover y otros servicios.
-db_node_1: cluster-master-1
-db_node_2: cluster-master-2
-db_node_3: cluster-worker-1
+# Por defecto lo asignamos a los 3 primeros nodos del grupo.
+db_node_1: "{{ groups['cluster-node'][0] }}"
+db_node_2: "{{ groups['cluster-node'][1] }}"
+db_node_3: "{{ groups['cluster-node'][2] }}"
 
 # Puerto SQL publicado por HAProxy dentro del Swarm.
 db_public_port: 3306

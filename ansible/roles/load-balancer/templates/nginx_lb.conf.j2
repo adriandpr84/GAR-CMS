@@ -7,9 +7,9 @@
 # --- Upstream: pool de servidores web ---
 upstream cms_backends {
     # Algoritmo round-robin (por defecto en Nginx).
-    # Cuando el Rol 2 añada los frontales, estos son los nodos destino.
-{% for backend in lb_backends %}
-    server {{ backend.ip }}:{{ backend.port }};   # {{ backend.name }}
+    # Obtiene dinámicamente las IPs del grupo web-frontend.
+{% for host in groups['web-frontend'] %}
+    server {{ hostvars[host]['ansible_host'] }}:80;   # {{ host }}
 {% endfor %}
 }
 

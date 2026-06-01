@@ -9,8 +9,8 @@ define( 'DB_NAME', '{{ db_name | default("wordpress") }}' );
 define( 'DB_USER', '{{ db_user | default("wp_user") }}' );
 define( 'DB_PASSWORD', '{{ db_password | default("wp_pass") }}' );
 
-# Usaremos la IP del cluster master 1 como Host por defecto hasta que Role 3 ponga un HAProxy interno
-define( 'DB_HOST', '{{ db_host | default("192.168.2.11") }}' );
+# Usaremos la IP del primer nodo del cluster como Host por defecto dinámicamente
+define( 'DB_HOST', '{{ hostvars[groups["cluster-node"][0]]["ansible_host"] | default("127.0.0.1") }}' );
 
 define( 'DB_CHARSET', 'utf8' );
 define( 'DB_COLLATE', '' );
