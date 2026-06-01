@@ -103,19 +103,6 @@
 # y 22 (SSH para administración).
 # ------------------------------------------------------------------
 
-- name: "UFW: Instalar ufw"
-  apt:
-    name: ufw
-    state: present
-
-- name: "UFW: Política por defecto — denegar entradas, permitir salidas"
-  ufw:
-    direction: "{{ item.direction }}"
-    policy:    "{{ item.policy }}"
-  loop:
-    - { direction: incoming, policy: deny  }
-    - { direction: outgoing, policy: allow }
-
 - name: "UFW: Abrir puerto SSH (administración)"
   ufw:
     rule: allow

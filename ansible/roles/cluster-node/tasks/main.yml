@@ -6,6 +6,22 @@
 - name: "Docker: instalar y preparar Docker en todos los nodos"
   import_tasks: docker.yml
 
+- name: "UFW: Abrir puertos para Docker Swarm y Galera"
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port }}"
+    proto: "{{ item.proto }}"
+  loop:
+    - { port: '2377', proto: 'tcp' }
+    - { port: '7946', proto: 'tcp' }
+    - { port: '7946', proto: 'udp' }
+    - { port: '4789', proto: 'udp' }
+    - { port: '3306', proto: 'tcp' }
+    - { port: '4567', proto: 'tcp' }
+    - { port: '4567', proto: 'udp' }
+    - { port: '4568', proto: 'tcp' }
+    - { port: '4444', proto: 'tcp' }
+
 - name: "Swarm: crear el clúster y unir managers/workers"
   import_tasks: swarm.yml
 

@@ -17,6 +17,18 @@
     state: present
     update_cache: yes
 
+- name: "NGINX: Reiniciar y habilitar nginx"
+  service:
+    name: nginx
+    state: restarted
+    enabled: yes
+
+- name: "UFW: Abrir puerto HTTP (80) para Nginx"
+  community.general.ufw:
+    rule: allow
+    port: '80'
+    proto: tcp
+
 - name: "Eliminar sitio por defecto de Nginx"
   file:
     path: /etc/nginx/sites-enabled/default

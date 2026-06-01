@@ -10,6 +10,14 @@
 #   ansible-playbook -i inventory/hosts.yml site.yml --tags loadbalancer
 # ==============================================================
 
+# ── Rol 0: Base / Security / Monitoring ───────────────────────
+- name: "Rol 0 — Tareas comunes (UFW y SNMP)"
+  hosts: all
+  become: yes
+  roles:
+    - role: common
+  tags: common
+
 # ── Rol 1: Network & Edge Security ────────────────────────────
 - name: "Rol 1 — Load Balancer (Nginx + NAT + UFW)"
   hosts: load-balancer

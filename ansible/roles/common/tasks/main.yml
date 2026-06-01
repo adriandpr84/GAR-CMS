@@ -1,0 +1,61 @@
+---
+# ============================================================
+# Rol: common — Tareas base para TODOS los nodos
+# Requisitos: 9 (Seguridad/UFW) y 10 (Monitorización base/SNMP)
+# ============================================================
+
+# ------------------------------------------------------------
+# 1. MONITORIZACIÓN BASE (SNMP)
+# ------------------------------------------------------------
+- name: "SNMP: Instalar agente SNMP"
+  ansible.builtin.apt:
+    name: snmpd
+    state: present
+    update_cache: yes
+
+- name: "SNMP: Desplegar configuracion dinamica snmpd.conf"
+  ansible.builtin.template:
+    src: snmpd.conf.j2
+    dest: /etc/snmp/snmpd.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Reiniciar SNMP
+
+- name: "SNMP: Habilitar y arrancar servicio"
+  ansible.builtin.service:
+    name: snmpd
+    state: started
+    enabled: yes
+
+# ------------------------------------------------------------
+# 2. SEGURIDAD (UFW)
+# ------------------------------------------------------------
+- name: "UFW: Instalar firewall"
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+
+- name: "UFW: Política por defecto — denegar entrada, permitir salida"
+  community.general.ufw:
+    direction: "{{ item.direction }}"
+    policy: "{{ item.policy }}"
+  loop:
+    - { direction: incoming, policy: deny }
+    - { direction: outgoing, policy: allow }
+
+- name: "UFW: Permitir SSH (administración)"
+  community.general.ufw:
+    rule: allow
+    port: '22'
+    proto: tcp
+
+- name: "UFW: Permitir SNMP (monitorización)"
+  community.general.ufw:
+    rule: allow
+    port: '161'
+    proto: udp
+
+- name: "UFW: Habilitar el firewall"
+  community.general.ufw:
+    state: enabled

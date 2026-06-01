@@ -3,11 +3,7 @@
 # 1. BLOQUE UNIVERSAL: AGENTE SNMP (Para los 17 nodos)
 # ==============================================================
 
-- name: "[SNMP] Instalar dependencias del agente"
-  ansible.builtin.apt:
-    name: snmpd
-    state: present
-    update_cache: yes
+# Las dependencias de agente (snmpd) ahora se instalan en el rol 'common' para todos los nodos.
 
 - name: "[SNMP] Desplegar configuracion dinamica snmpd.conf"
   ansible.builtin.template:
@@ -41,6 +37,13 @@
     name: docker
     state: started
     enabled: yes
+  when: "inventory_hostname == 'monitoring'"
+
+- name: "UFW: Abrir puerto HTTP (80) para CheckMK"
+  community.general.ufw:
+    rule: allow
+    port: '80'
+    proto: tcp
   when: "inventory_hostname == 'monitoring'"
 
 - name: "[CheckMK] Desplegar el contenedor oficial de CheckMK Raw"

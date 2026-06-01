@@ -7,6 +7,16 @@
     state: present
     update_cache: yes
 
+- name: UFW: Abrir puertos para GlusterFS
+  community.general.ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  loop:
+    - '24007'
+    - '24008'
+    - '49152:49160'
+
 - name: Asegurar que el servicio GlusterFS está iniciado y habilitado
   service:
     name: glusterd
