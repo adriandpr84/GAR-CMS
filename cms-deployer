@@ -2,6 +2,7 @@
 import os
 import sys
 import json
+import getpass
 import argparse
 import urllib.request
 import urllib.error
@@ -10,7 +11,6 @@ from provisioning.jumpstart.parsers import load_all_nodes, load_settings_file
 from provisioning.jumpstart.validators import validate_nodes
 from provisioning.jumpstart.baremetal import undeploy_virtualbox_vms, start_virtualbox_vms, stop_virtualbox_vms, get_existing_vms
 from provisioning.jumpstart.config_generator import generate_pxe_configs
-from provisioning.jumpstart.software_provisioner import provision_all_nodes
 
 GREEN = '\033[92m'
 YELLOW = '\033[93m'
@@ -41,6 +41,36 @@ def _check_service(url, timeout=5):
             return r.status == 200
     except Exception:
         return False
+
+def _tail_logs_until_idle():
+    import subprocess
+    print(f"\n    {CYAN}========================================================================{NC}")
+    print(f"    {CYAN}📺 CONECTANDO A LA SALIDA DE LOGS DEL ORQUESTADOR...{NC}")
+    print(f"    {CYAN}ℹ️  Si cierras esto (Ctrl+C), el despliegue SEGUIRÁ en segundo plano.{NC}")
+    print(f"    {CYAN}========================================================================{NC}\n")
+    try:
+        process = subprocess.Popen(
+            ["journalctl", "-u", "provisioning-coordinator", "-f", "-o", "cat", "--since", "5 seconds ago"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True
+        )
+        for line in iter(process.stdout.readline, ''):
+            sys.stdout.write(line)
+            sys.stdout.flush()
+            if "Orquestador vuelve a estado IDLE" in line or "estado restaurado a IDLE" in line:
+                print(f"\n    {GREEN}========================================================================{NC}")
+                print(f"    {GREEN}✓ Despliegue completado con éxito. Cerrando salida de logs...{NC}")
+                print(f"    {GREEN}========================================================================{NC}")
+                break
+        process.terminate()
+    except KeyboardInterrupt:
+        process.terminate()
+        print(f"\n    {YELLOW}========================================================================{NC}")
+        print(f"    {YELLOW}* Desconectado de la salida de logs.{NC}")
+        print(f"    {YELLOW}* El proceso SIGUE ACTIVO en background. Para pararlo usa: ./cms-deployer abort{NC}")
+        print(f"    {YELLOW}========================================================================{NC}")
+        sys.exit(0)
 
 def preflight_checks(host_api_url, settings, need_vbox=False, need_callback=False):
     errors = []
@@ -73,6 +103,28 @@ def preflight_checks(host_api_url, settings, need_vbox=False, need_callback=Fals
             print(e)
         print()
         sys.exit(1)
+def _resolve_nodes(args, all_nodes):
+    if args.file and args.node:
+        print(f"[{RED}-{NC}] Error: No puedes indicar nodos manualmente y usar '-f' a la vez.")
+        sys.exit(1)
+        
+    if args.file:
+        filter_names = _load_nodes_file(args.file)
+    elif args.node:
+        filter_names = args.node
+    else:
+        return all_nodes
+
+    # Eliminar duplicados para evitar comportamientos extraños
+    filter_names = list(set(filter_names))
+
+    resolved = [n for n in all_nodes if n.get('name') in filter_names]
+    not_found = [name for name in filter_names if name not in [n.get('name') for n in all_nodes]]
+    if not_found:
+        print(f"[{YELLOW}!{NC}] Nodos no encontrados en los YAMLs: {', '.join(not_found)}")
+        sys.exit(1)
+    return resolved
+
 
 def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -86,13 +138,13 @@ def main():
     parent_parser.add_argument('--nodes-dir', default=default_nodes_dir, help=f"Directorio con archivos YAML de nodos")
     parent_parser.add_argument('--templates-dir', default=default_templates_dir, help=f"Directorio con plantillas Autoinstall")
     parent_parser.add_argument('--vm-dir', default="/home/Chadry/VirtualBox VMs", help="Ruta base para los discos virtuales en el host")
-    parent_parser.add_argument('--nodes-file', metavar='FICHERO', default=None, help="Fichero de texto con los nodos a operar (uno por línea, # para comentarios)")
+    parent_parser.add_argument('-f', '--file', metavar='FICHERO', default=None, help="Fichero de texto con los nodos a operar (uno por línea, # para comentarios)")
 
     parser_deploy = subparsers.add_parser('deploy', parents=[parent_parser], help="Desplegar las VMs en VirtualBox a partir de la maqueta")
-    parser_deploy.add_argument('node', nargs='?', help="Nombre de un nodo específico para desplegar (opcional, por defecto todos)")
+    parser_deploy.add_argument('node', nargs='*', help="Nombres de los nodos a desplegar (opcional, por defecto todos)")
 
     parser_undeploy = subparsers.add_parser('undeploy', parents=[parent_parser], help="Eliminar las VMs de VirtualBox (excepto jumpstart)")
-    parser_undeploy.add_argument('node', nargs='?', help="Nombre de un nodo específico para desinstalar (opcional, por defecto todos)")
+    parser_undeploy.add_argument('node', nargs='*', help="Nombres de los nodos a desinstalar (opcional, por defecto todos)")
 
     parser_generate = subparsers.add_parser('generate-configs', parents=[parent_parser], help="Generar configuraciones PXE, DHCP y Autoinstall")
 
@@ -100,14 +152,33 @@ def main():
     parser_provision.add_argument('node', nargs='*', help="Nombres de los nodos a aprovisionar (opcional, por defecto todos)")
 
     parser_start = subparsers.add_parser('start', parents=[parent_parser], help="Iniciar las VMs en VirtualBox (excepto jumpstart)")
-    parser_start.add_argument('node', nargs='?', help="Nombre de un nodo específico para iniciar (opcional, por defecto todos)")
+    parser_start.add_argument('node', nargs='*', help="Nombres de los nodos a iniciar (opcional, por defecto todos)")
     parser_start.add_argument('--type', choices=['headless', 'gui', 'separate'], default='headless', help="Modo de inicio de la VM (headless, gui, separate)")
 
     parser_stop = subparsers.add_parser('stop', parents=[parent_parser], help="Detener las VMs en VirtualBox (excepto jumpstart)")
-    parser_stop.add_argument('node', nargs='?', help="Nombre de un nodo específico para detener (opcional, por defecto todos)")
+    parser_stop.add_argument('node', nargs='*', help="Nombres de los nodos a detener (opcional, por defecto todos)")
     parser_stop.add_argument('--mode', choices=['poweroff', 'acpipowerbutton', 'savestate', 'pause', 'resume'], default='acpipowerbutton', help="Modo de parada de la VM (poweroff, acpipowerbutton, savestate, pause, resume)")
 
+    parser_abort = subparsers.add_parser('abort', parents=[parent_parser], help="Abortar procesos en curso en el coordinador")
+
     args = parser.parse_args()
+
+    def _prompt_become_password():
+        """Solicita la contraseña de sudo de los nodos de forma segura (sin eco en pantalla)."""
+        print(f"[{CYAN}*{NC}] Se necesita la contraseña sudo de los nodos para que Ansible pueda ejecutar tareas privilegiadas.")
+        pwd = getpass.getpass(f"    Contraseña sudo de los nodos: ")
+        if not pwd:
+            print(f"[{RED}!{NC}] No se introdujo ninguna contraseña. Abortando.")
+            sys.exit(1)
+        return pwd
+
+    if args.action in ('deploy', 'generate-configs') and os.geteuid() != 0:
+        print(f"[{YELLOW}!{NC}] La acción '{args.action}' requiere privilegios de administrador. Solicitando sudo...")
+        try:
+            os.execvp("sudo", ["sudo", sys.executable] + sys.argv)
+        except Exception as e:
+            print(f"[{RED}-{NC}] Error al intentar escalar privilegios: {e}")
+            sys.exit(1)
     
     nodes = load_all_nodes(args.nodes_dir)
     if not nodes:
@@ -126,12 +197,14 @@ def main():
             sys.exit(1)
         preflight_checks(host_api_url, settings, need_vbox=True, need_callback=True)
             
-        target_names = [n.get('name') for n in nodes if n.get('name') != 'jumpstart' and n.get('mac')]
+        deploy_nodes = _resolve_nodes(args, nodes)
+        
+        target_names = [n.get('name') for n in deploy_nodes if n.get('name') != 'jumpstart' and n.get('mac')]
         existing = get_existing_vms(host_api_url)
         conflicting = [name for name in target_names if name in existing]
         
         if conflicting:
-            print(f"\n[{YELLOW}!{NC}] Ya existen VMs de un despliegue anterior: {', '.join(conflicting)}")
+            print(f"\n[{YELLOW}!{NC}] Ya existen VMs en el Host: {', '.join(conflicting)}")
             print(f"    {YELLOW}Continuar las ELIMINARÁ y creará de nuevo desde cero.{NC}")
             confirm = input("\n    ¿Deseas continuar? (s/N): ").strip().lower()
             if confirm not in ('s', 'si', 'sí', 'y', 'yes'):
@@ -141,27 +214,33 @@ def main():
 
         print("[*] Generando configuraciones de red antes del despliegue...")
         generate_pxe_configs(nodes, args.templates_dir)
-            
-        deploy_nodes = nodes
-        if args.node and args.nodes_file:
-            print(f"[{RED}-{NC}] Error: No puedes usar 'node' y '--nodes-file' a la vez.")
-            sys.exit(1)
-        elif args.nodes_file:
-            filter_names = _load_nodes_file(args.nodes_file)
-            deploy_nodes = [n for n in nodes if n.get('name') in filter_names]
-            not_found = [name for name in filter_names if name not in [n.get('name') for n in nodes]]
-            if not_found:
-                print(f"[{YELLOW}!{NC}] Nodos del fichero no encontrados en los YAMLs: {', '.join(not_found)}")
-        elif args.node:
-            deploy_nodes = [n for n in nodes if n.get('name') == args.node]
-            if not deploy_nodes:
-                print(f"[-] Error: El nodo '{args.node}' no está definido en los archivos YAML.")
-                sys.exit(1)
-                
+
+        # Limpiar claves SSH antiguas del known_hosts para evitar conflictos
+        # en el redeploy (las VMs nuevas generan claves SSH distintas)
+        import subprocess as _sp
+        _cleaned = 0
+        for _node in deploy_nodes:
+            if _node.get('name') == 'jumpstart':
+                continue
+            for _net in _node.get('networks', []):
+                _ip = _net.get('ip')
+                if _ip:
+                    _sp.run(['ssh-keygen', '-f', '/home/admin/.ssh/known_hosts', '-R', _ip],
+                            check=False, capture_output=True)
+                    _cleaned += 1
+                    break  # Solo la IP primaria
+        if _cleaned:
+            print(f"[{GREEN}✓{NC}] Limpiadas {_cleaned} entradas antiguas del known_hosts.")
+
+        # Pedir la contraseña sudo ANTES de lanzar el coordinador en background.
+        # Se mete en el payload para que el coordinador la tenga disponible cuando
+        # termine la fase PXE y tenga que lanzar Ansible.
+        become_password = _prompt_become_password()
+
         # Enviar al coordinador central
         callback_port = settings.get('orchestrator', {}).get('port', 8081)
         url = f"http://127.0.0.1:{callback_port}/start-batch-deploy"
-        payload = json.dumps({"vms": deploy_nodes}).encode('utf-8')
+        payload = json.dumps({"vms": deploy_nodes, "become_password": become_password}).encode('utf-8')
         req = urllib.request.Request(url, data=payload, method="POST")
         req.add_header('Content-Type', 'application/json')
         req.add_header('Content-Length', str(len(payload)))
@@ -169,9 +248,7 @@ def main():
             with urllib.request.urlopen(req) as response:
                 resp_data = json.loads(response.read().decode('utf-8'))
                 print(f"[{GREEN}✓{NC}] {resp_data.get('message', 'Despliegue escalonado iniciado')}")
-                print(f"    El Coordinador Residente gestionará la instalación asíncrona de las VMs.")
-                print(f"    Puedes monitorear el progreso revisando los logs del servicio:")
-                print(f"    {CYAN}journalctl -u provisioning-coordinator -f{NC}")
+                _tail_logs_until_idle()
         except urllib.error.HTTPError as e:
             err_body = e.read().decode('utf-8', errors='ignore')
             try:
@@ -189,16 +266,21 @@ def main():
             sys.exit(1)
         preflight_checks(host_api_url, settings, need_vbox=True)
             
-        undeploy_nodes = nodes
-        if args.node and args.nodes_file:
-            print(f"[{RED}-{NC}] Error: No puedes usar 'node' y '--nodes-file' a la vez.")
-            sys.exit(1)
-        elif args.nodes_file:
-            filter_names = _load_nodes_file(args.nodes_file)
-            undeploy_nodes = [n for n in nodes if n.get('name') in filter_names]
-        elif args.node:
-            undeploy_nodes = [n for n in nodes if n.get('name') == args.node]
+        undeploy_nodes = _resolve_nodes(args, nodes)
         undeploy_virtualbox_vms(undeploy_nodes, host_api_url)
+        
+        # Resetear el estado del coordinador para que no quede pillado
+        callback_port = settings.get('jumpstart', {}).get('callback_port', 8081)
+        coordinator_url = f"http://localhost:{callback_port}/reset"
+        try:
+            req = urllib.request.Request(coordinator_url, data=b'', method='POST')
+            with urllib.request.urlopen(req, timeout=3) as r:
+                if r.status == 200:
+                    print(f"[{GREEN}✓{NC}] Coordinador reseteado a IDLE.")
+        except Exception:
+            print(f"[{YELLOW}!{NC}] Aviso: No se pudo contactar con el coordinador para resetear su estado.")
+            print(f"    Si el coordinador está activo, puedes resetearlo manualmente:")
+            print(f"    curl -X POST {coordinator_url}")
         
     elif args.action == 'generate-configs':
         if not validate_nodes(nodes):
@@ -207,35 +289,61 @@ def main():
 
     elif args.action == 'start':
         preflight_checks(host_api_url, settings, need_vbox=True)
-        start_nodes = nodes
-        if args.node and args.nodes_file:
-            print(f"[{RED}-{NC}] Error: No puedes usar 'node' y '--nodes-file' a la vez.")
-            sys.exit(1)
-        elif args.nodes_file:
-            filter_names = _load_nodes_file(args.nodes_file)
-            start_nodes = [n for n in nodes if n.get('name') in filter_names]
-        elif args.node:
-            start_nodes = [n for n in nodes if n.get('name') == args.node]
+        start_nodes = _resolve_nodes(args, nodes)
         start_virtualbox_vms(start_nodes, host_api_url, args.type)
 
     elif args.action == 'stop':
         preflight_checks(host_api_url, settings, need_vbox=True)
-        stop_nodes = nodes
-        if args.node and args.nodes_file:
-            print(f"[{RED}-{NC}] Error: No puedes usar 'node' y '--nodes-file' a la vez.")
-            sys.exit(1)
-        elif args.nodes_file:
-            filter_names = _load_nodes_file(args.nodes_file)
-            stop_nodes = [n for n in nodes if n.get('name') in filter_names]
-        elif args.node:
-            stop_nodes = [n for n in nodes if n.get('name') == args.node]
+        stop_nodes = _resolve_nodes(args, nodes)
         stop_virtualbox_vms(stop_nodes, host_api_url, args.mode)
 
     elif args.action == 'provision':
-        target_names = args.node if args.node else [n.get('name') for n in nodes if n.get('name') != 'jumpstart']
-        print(f"[*] Iniciando aprovisionamiento directo de Ansible para: {', '.join(target_names)}")
-        target_nodes = [n for n in nodes if n.get('name') in target_names]
-        provision_all_nodes(target_nodes)
+        print("[*] Asegurando que el inventario de Ansible esté actualizado...")
+        generate_pxe_configs(nodes, args.templates_dir)
+        
+        target_nodes = _resolve_nodes(args, nodes)
+        if not args.node and not args.file:
+            target_nodes = [n for n in target_nodes if n.get('name') != 'jumpstart']
+        target_names = [n.get('name') for n in target_nodes]
+        print(f"[*] Preparando aprovisionamiento de Ansible para: {', '.join(target_names)}")
+
+        become_password = _prompt_become_password()
+
+        callback_port = settings.get('orchestrator', {}).get('port', 8081)
+        url = f"http://127.0.0.1:{callback_port}/provision"
+        payload = json.dumps({"vms": target_nodes, "become_password": become_password}).encode('utf-8')
+        req = urllib.request.Request(url, data=payload, method="POST")
+        req.add_header('Content-Type', 'application/json')
+        req.add_header('Content-Length', str(len(payload)))
+        try:
+            with urllib.request.urlopen(req) as response:
+                resp_data = json.loads(response.read().decode('utf-8'))
+                print(f"[{GREEN}✓{NC}] {resp_data.get('message', 'Aprovisionamiento iniciado')}")
+                _tail_logs_until_idle()
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode('utf-8', errors='ignore')
+            try:
+                err_json = json.loads(err_body)
+                print(f"[{RED}!{NC}] Coordinador: {err_json.get('error', err_body)}")
+            except json.JSONDecodeError:
+                print(f"[{RED}!{NC}] Error HTTP {e.code} contactando con el Coordinador.")
+            sys.exit(1)
+        except Exception as e:
+            print(f"[{RED}!{NC}] Error contactando con el Coordinador local: {e}")
+            sys.exit(1)
+
+    elif args.action == 'abort':
+        print("[*] Abortando cualquier aprovisionamiento de Ansible en curso y reseteando colas...")
+        callback_port = settings.get('orchestrator', {}).get('port', 8081)
+        url = f"http://127.0.0.1:{callback_port}/reset"
+        req = urllib.request.Request(url, method="POST")
+        try:
+            with urllib.request.urlopen(req) as response:
+                resp_data = json.loads(response.read().decode('utf-8'))
+                print(f"[{GREEN}✓{NC}] {resp_data.get('message', 'Abortado con éxito')}")
+        except Exception as e:
+            print(f"[{RED}!{NC}] Error contactando con el Coordinador: {e}")
+            sys.exit(1)
 
 if __name__ == '__main__':
     main()

@@ -26,14 +26,13 @@ subnet {{ net.subnet }} netmask {{ net.netmask }} {
 
 {% for node in nodes %}
 {% if node.name != 'jumpstart' and node.mac %}
-{% for node_net in node.networks %}
+{% set node_net = node.networks[0] %}
 {% if node_net.name == net.name and node_net.ip %}
   host {{ node.name }} {
     hardware ethernet {{ node.mac | upper }};
     fixed-address {{ node_net.ip }};
   }
 {% endif %}
-{% endfor %}
 {% endif %}
 {% endfor %}
 }

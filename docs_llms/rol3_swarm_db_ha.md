@@ -226,3 +226,4 @@ También permite indicar inventario:
 ## 11. Explicación para la defensa
 
 El rol instala Docker en los cuatro nodos asignados y crea un clúster Docker Swarm. `cluster-master-1` se usa como manager principal, `cluster-master-2` como segundo manager y los dos workers se unen como nodos de ejecución. Sobre ese Swarm se construye una imagen local de MariaDB Galera y se despliega un stack de base de datos con tres servicios Galera, cada uno fijado a un nodo distinto, y un HAProxy que publica el puerto 3306. De esta forma, la capa de datos queda replicada y se puede comprobar con `docker node ls`, `docker service ls`, `docker stack ps gar_db` y una conexión SQL básica.
+

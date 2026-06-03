@@ -66,13 +66,54 @@
     - role: hotdesk
   tags: hotdesk
 
-# ── Rol 7: Security Lockdown ──────────────────────────────────
-- name: "Rol 7 — Seguridad final (Sudo Lockdown)"
+# ── Rol 7: Security Lockdown y Relevo de Red ──────────────────
+- name: "Rol 7 — Seguridad final (Sudo Lockdown y Cambio de Enrutamiento)"
   hosts: all
   become: yes
+  vars_files:
+    - "../../config/networks.yml"
   tasks:
-    - name: "SEGURIDAD: Eliminar permisos NOPASSWD temporales de sudo"
-      file:
-        path: "/etc/sudoers.d/99-{{ ansible_user }}-nopasswd"
-        state: absent
+    - name: "RED: Eliminar gateway antiguo de cloud-init (Nodos Main)"
+      replace:
+        path: /etc/netplan/50-cloud-init.yaml
+        regexp: '^\s*gateway4:.*$'
+        replace: ''
+      when: "inventory_hostname in groups['web-frontend'] or inventory_hostname in groups['hotdesk']"
+
+    - name: "RED: Eliminar gateway antiguo de cloud-init (Nodos Internal)"
+      replace:
+        path: /etc/netplan/50-cloud-init.yaml
+        regexp: '^\s*gateway4:.*$'
+        replace: ''
+      when: "inventory_hostname in groups['cluster-node'] or inventory_hostname in groups['storage'] or inventory_hostname in groups['monitoring']"
+
+    - name: "RED: Cambiar Default Gateway al Load Balancer (Nodos Main)"
+      copy:
+        dest: /etc/netplan/99-gateway-override.yaml
+        content: |
+          network:
+            version: 2
+            ethernets:
+              enp0s3:
+                routes:
+                  - to: default
+                    via: {{ (networks | selectattr('name', 'equalto', 'intnet_main') | first).final_gateway }}
+      when: "inventory_hostname in groups['web-frontend'] or inventory_hostname in groups['hotdesk']"
+
+    - name: "RED: Cambiar Default Gateway al Load Balancer (Nodos Internal)"
+      copy:
+        dest: /etc/netplan/99-gateway-override.yaml
+        content: |
+          network:
+            version: 2
+            ethernets:
+              enp0s3:
+                routes:
+                  - to: default
+                    via: {{ (networks | selectattr('name', 'equalto', 'intnet_internal') | first).final_gateway }}
+      when: "inventory_hostname in groups['cluster-node'] or inventory_hostname in groups['storage'] or inventory_hostname in groups['monitoring']"
+
+    - name: "RED: Aplicar nueva ruta por defecto"
+      command: netplan apply
+      when: "inventory_hostname != 'load-balancer'"
   tags: lockdown

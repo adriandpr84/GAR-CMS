@@ -22,7 +22,7 @@
   apt:
     name: iptables-persistent
     state: present
-    update_cache: yes
+    update_cache: "{{ internet_available | default(false) }}"
   environment:
     DEBIAN_FRONTEND: noninteractive
 
@@ -77,7 +77,7 @@
   apt:
     name: nginx
     state: present
-    update_cache: yes
+    update_cache: "{{ internet_available | default(false) }}"
 
 - name: "NGINX: Asegurar que el directorio de sites-available existe"
   file:
@@ -155,18 +155,31 @@
     owner: admin
     group: admin
 
-- name: "SSH: Copiar clave privada del Jumpstart al Load Balancer"
-  copy:
-    src: /home/admin/.ssh/id_rsa
-    dest: /home/admin/.ssh/id_rsa
-    mode: '0600'
-    owner: admin
-    group: admin
+- name: "SSH: Generar par de claves SSH dedicado para el Load Balancer (Bastión)"
+  user:
+    name: admin
+    generate_ssh_key: yes
+    ssh_key_bits: 2048
+    ssh_key_file: .ssh/id_rsa
+  register: lb_ssh_key
 
-- name: "SSH: Copiar clave pública del Jumpstart al Load Balancer"
-  copy:
-    src: /home/admin/.ssh/id_rsa.pub
-    dest: /home/admin/.ssh/id_rsa.pub
-    mode: '0644'
-    owner: admin
-    group: admin
+- name: "SSH: Distribuir y autorizar la clave pública del Load Balancer en todos los hosts"
+  authorized_key:
+    user: admin
+    key: "{{ lb_ssh_key.ssh_public_key }}"
+    state: present
+  delegate_to: "{{ item }}"
+  loop: "{{ groups['all'] }}"
+  when: "item != 'load-balancer'"
+
+- name: "SISTEMA: Configurar /etc/hosts con la lista completa de nodos del inventario"
+  ansible.builtin.blockinfile:
+    path: /etc/hosts
+    block: |
+      {% for host in groups['all'] %}
+      {% if hostvars[host]['ansible_host'] is defined %}
+      {{ hostvars[host]['ansible_host'] }} {{ host }}
+      {% endif %}
+      {% endfor %}
+      192.168.1.254 jumpstart
+    marker: "# {mark} ANSIBLE MANAGED HOSTS"

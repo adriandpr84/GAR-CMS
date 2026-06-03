@@ -1,6 +1,7 @@
 import json
 import urllib.request
 import urllib.error
+import sys
 
 GREEN = '\033[92m'
 YELLOW = '\033[93m'
@@ -16,8 +17,10 @@ def _make_get_request(api_url, path):
     try:
         with urllib.request.urlopen(endpoint, timeout=10) as response:
             return json.loads(response.read().decode('utf-8'))
-    except Exception:
-        return None
+    except Exception as e:
+        print(f"[{RED}!{NC}] Error crítico: No se pudo contactar con la API del Host en {endpoint} ({e})")
+        print(f"[{RED}!{NC}] Asegúrate de que el servicio vbox-api está levantado y no está bloqueado.")
+        sys.exit(1)
 
 def get_existing_vms(host_api_url):
     """Obtiene la lista de VMs registradas en VirtualBox a través de la API."""
@@ -26,7 +29,7 @@ def get_existing_vms(host_api_url):
         return result.get("vms", [])
     return []
 
-def _make_api_request(api_url, path, payload_dict, timeout=10):
+def _make_api_request(api_url, path, payload_dict, timeout=20):
     """Realiza una petición POST genérica a la API de VirtualBox."""
     if not api_url:
         print(f"[-] Error: URL de la API no configurada. No se puede contactar con {path}.")
@@ -50,28 +53,54 @@ def _make_api_request(api_url, path, payload_dict, timeout=10):
             print(f"[{RED}-{NC}] Error HTTP {e.code} en {endpoint}")
             return None
     except urllib.error.URLError as e:
-        print(f"[{RED}-{NC}] Error de conexión con la API del Host ({endpoint}): {e}")
-        return None
+        print(f"[{RED}!{NC}] Error crítico de conexión con la API del Host ({endpoint}): {e}")
+        sys.exit(1)
     except Exception as e:
         print(f"[{RED}!{NC}] Error inesperado al llamar a la API {endpoint}: {e}")
-        return None
+        sys.exit(1)
 
-def apply_post_install_specs(host_api_url, node):
-    """Cambia el orden de arranque a disco y aplica la memoria/cpu final de producción."""
-    name = node.get("name")
-    specs = node.get("production_specs", {})
-    print(f"[*] Aplicando orden de arranque y recursos finales a '{name}'...")
-    result = _make_api_request(host_api_url, "/vbox/set-boot-order", {
-        "vm": name,
-        "boot": ["disk", "net", "none", "none"],
-        "ram_mb": specs.get("ram_mb", 1024),
-        "cpus": specs.get("cpus", 1)
-    })
-    
-    if result and result.get("status") == "ok":
-        print(f"[{GREEN}✓{NC}] Éxito: {result.get('message', 'Orden de arranque y recursos actualizados')}")
+
+def apply_post_install_specs(host_api_url, nodes):
+    """
+    Aplica boot order y recursos de producción a todos los nodos completados,
+    en paralelo a través de la API del Host.
+
+    Envía todos los nodos de golpe al endpoint /vbox/modifyvm, que
+    los procesa internamente en paralelo y devuelve el resultado real de cada
+    uno. Bloquea hasta que la API responde (timeout de 5 min por si alguna
+    VM tarda en apagarse).
+
+    Devuelve True si todo fue bien, False si algún nodo falló.
+    """
+    nodes_specs = []
+    for node in nodes:
+        name = node.get("name")
+        if not name or name == "jumpstart":
+            continue
+        specs = node.get("production_specs", {})
+        nodes_specs.append({
+            "vm":     name,
+            "boot":   ["disk", "net", "none", "none"],
+            "ram_mb": specs.get("ram_mb", 1024),
+            "cpus":   specs.get("cpus", 1),
+        })
+
+    if not nodes_specs:
         return True
-    return False
+
+    print(f"[*] Aplicando specs finales a {len(nodes_specs)} VMs en paralelo...")
+    result = _make_api_request(
+        host_api_url, "/vbox/modifyvm",
+        {"nodes": nodes_specs},
+        timeout=300,  # 5 min: margen amplio para que todas las VMs se apaguen
+    )
+    if result and result.get("status") == "ok":
+        print(f"[{GREEN}✓{NC}] {result.get('message', 'Specs aplicadas correctamente')}")
+        return True
+    else:
+        msg = result.get("message", "Error desconocido") if result else "Sin respuesta de la API"
+        print(f"[{RED}!{NC}] Error al aplicar specs finales: {msg}")
+        return False
 
 def create_vms(nodes, host_api_url):
     """Prepara la configuración y pide a VirtualBox que cree las VMs."""
@@ -103,20 +132,24 @@ def create_vms(nodes, host_api_url):
 def undeploy_virtualbox_vms(nodes, host_api_url):
     """Hace una petición a la API del Host para eliminar todas las VMs."""
     vms_to_process = [{"name": n.get('name')} for n in nodes if n.get('name') != 'jumpstart']
-    print(f"[{CYAN}*{NC}] Enviando petición de borrado masivo de {len(vms_to_process)} VMs a la API del Host...")
+    print(f"[{CYAN}*{NC}] Enviando petición de borrado de {len(vms_to_process)} VMs a la API del Host...")
     result = _make_api_request(host_api_url, "/vbox/delete-vms", {"vms": vms_to_process}, timeout=120)
     if result and result.get("status") == "ok":
         print(f"[{GREEN}✓{NC}] {result.get('message', 'Desinstalación completada')}")
     else:
         print(f"[{RED}!{NC}] Fallo en la desinstalación.")
 
+import time
+
 def start_virtualbox_vms(nodes, host_api_url, vm_type="headless"):
     """Inicia las VMs a través de la API del Host."""
     vms_to_process = [n.get('name') for n in nodes if n.get('name') != 'jumpstart']
     if not vms_to_process: return
-    print(f"[{CYAN}*{NC}] Enviando orden de INICIO en lote para {len(vms_to_process)} VMs a través de la API del Host...")
-    _make_api_request(host_api_url, "/vbox/start", {"vms": vms_to_process, "type": vm_type})
-    print(f"[{GREEN}✓{NC}] Órdenes de encendido enviadas.")
+    print(f"[{CYAN}*{NC}] Enviando orden de INICIO escalonado para {len(vms_to_process)} VMs a través de la API del Host...")
+    for vm_name in vms_to_process:
+        _make_api_request(host_api_url, "/vbox/start", {"vms": [vm_name], "type": vm_type})
+        time.sleep(3) # Pausa de 3 segundos entre máquinas para evitar Boot Storm
+    print(f"[{GREEN}✓{NC}] Órdenes de encendido escalonadas enviadas.")
 
 def stop_virtualbox_vms(nodes, host_api_url, mode="acpipowerbutton"):
     """Detiene las VMs a través de la API del Host."""

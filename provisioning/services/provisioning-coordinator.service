@@ -6,9 +6,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# Ejecutar como root para poder escribir en /srv/tftp y lanzar Ansible con la clave de root
-User=root
-Group=root
+# Ejecutar como admin para lanzar Ansible con la clave maestra sin duplicar claves
+User=admin
+Group=admin
 
 # Ruta al script de callback — se inyecta dinámicamente mediante Ansible
 WorkingDirectory=__REPO_DIR__

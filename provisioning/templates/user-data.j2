@@ -46,16 +46,15 @@ autoinstall:
 {% endif %}
 {% endfor %}
   storage:
+    swap:
+      size: 512M
     layout:
       name: direct
   updates: security
+  early-commands:
+    - ( FILE="/target/usr/bin/unattended-upgrade" ; until [ -e "$FILE" ] ; do sleep 1 ; done ; sed -i '1i#!/bin/true' "$FILE" ) &
   late-commands:
-    - "curtin in-target systemctl disable apt-daily.timer apt-daily-upgrade.timer"
-    - "curtin in-target systemctl disable unattended-upgrades.service"
-    - "curtin in-target apt-get purge -y snapd"
-    - "curtin in-target apt-get purge -y landscape-common apport ubuntu-advantage-tools popularity-contest update-notifier-common"
-    - "curtin in-target apt-get autoremove --purge -y"
-    - "curtin in-target apt-get clean"
-    - "curl -sf http://{{ jumpstart_ip }}:{{ callback_port }}/node-ready?node={{ node.name }} || true"
+    - "sed -i '\\,^#!/bin/true$,d' /target/usr/bin/unattended-upgrade || true"
+    - "curtin in-target -- systemctl disable apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service || true"
+    - "curtin in-target -- curl --max-time 30 -sf http://{{ jumpstart_ip }}:{{ callback_port }}/node-ready?node={{ node.name }} || true"
   shutdown: poweroff
-

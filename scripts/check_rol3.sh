@@ -24,3 +24,4 @@ printf '\n=== 6) Prueba SQL básica desde el manager ===\n'
 ssh "$MANAGER" "mysql -h 127.0.0.1 -P 3306 -u cmsuser -p'CmsPass2026!' -e 'SHOW DATABASES;' || true"
 
 printf '\nComprobación terminada. Si el último comando falla al principio, espera a que Galera termine de arrancar y repite.\n'
+

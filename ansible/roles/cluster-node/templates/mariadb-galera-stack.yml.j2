@@ -4,7 +4,9 @@ services:
   db1:
     image: {{ db_image }}
     networks:
-      - {{ db_overlay_network }}
+      {{ db_overlay_network }}:
+        aliases:
+          - db1
     environment:
       MYSQL_ROOT_PASSWORD: "{{ db_root_password }}"
       MYSQL_DATABASE: "{{ db_name }}"
@@ -19,6 +21,12 @@ services:
       GALERA_MARIABACKUP_PASSWORD: "{{ db_mariabackup_password }}"
     volumes:
       - db1_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     deploy:
       replicas: 1
       restart_policy:
@@ -31,7 +39,9 @@ services:
   db2:
     image: {{ db_image }}
     networks:
-      - {{ db_overlay_network }}
+      {{ db_overlay_network }}:
+        aliases:
+          - db2
     environment:
       MYSQL_ROOT_PASSWORD: "{{ db_root_password }}"
       MYSQL_DATABASE: "{{ db_name }}"
@@ -46,6 +56,12 @@ services:
       GALERA_MARIABACKUP_PASSWORD: "{{ db_mariabackup_password }}"
     volumes:
       - db2_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     deploy:
       replicas: 1
       restart_policy:
@@ -58,7 +74,9 @@ services:
   db3:
     image: {{ db_image }}
     networks:
-      - {{ db_overlay_network }}
+      {{ db_overlay_network }}:
+        aliases:
+          - db3
     environment:
       MYSQL_ROOT_PASSWORD: "{{ db_root_password }}"
       MYSQL_DATABASE: "{{ db_name }}"
@@ -73,6 +91,12 @@ services:
       GALERA_MARIABACKUP_PASSWORD: "{{ db_mariabackup_password }}"
     volumes:
       - db3_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     deploy:
       replicas: 1
       restart_policy:

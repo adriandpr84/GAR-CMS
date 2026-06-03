@@ -7,4 +7,4 @@
 
 - name: "Ejecutar configuración de Clientes GlusterFS"
   import_tasks: client.yml
-  when: inventory_hostname in groups['web_frontends']
+  when: inventory_hostname in groups['web-frontend']

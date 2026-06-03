@@ -40,7 +40,7 @@ case "${1:-}" in
         echo "[+] Servicio reiniciado!"
         ;;
     status)
-        systemctl --user status "${SERVICE_NAME}"
+        systemctl --user status "${SERVICE_NAME}" --no-pager
         ;;
     logs)
         if [[ "${2:-}" == "-f" ]]; then

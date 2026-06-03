@@ -80,12 +80,51 @@ fi
 EXTRA_ARGS=()
 
 # Solo el primer arranque de db1 crea el clúster.
-# En reinicios posteriores intenta unirse al clúster existente para evitar split-brain.
-if [ "$GALERA_BOOTSTRAP" = "yes" ] && [ ! -f "$DATADIR/.galera_bootstrapped" ]; then
-  echo "Bootstrap inicial del clúster Galera en ${GALERA_NODE_NAME}"
-  touch "$DATADIR/.galera_bootstrapped"
-  chown mysql:mysql "$DATADIR/.galera_bootstrapped"
-  EXTRA_ARGS+=("--wsrep-new-cluster")
+# En reinicios posteriores, si todos los nodos están caídos, re-inicializa el clúster (evita bloqueo por apagado frío).
+if [ "$GALERA_BOOTSTRAP" = "yes" ]; then
+  if [ -f "$DATADIR/.galera_bootstrapped" ]; then
+    echo "El clúster ya fue inicializado anteriormente. Comprobando estado de otros nodos..."
+    set +e
+    node_active=0
+    # Comprobamos si db2 o db3 responden en el puerto Galera (4567)
+    for node in db2 db3; do
+      if getent hosts "$node" >/dev/null 2>&1; then
+        if timeout 3 bash -c "cat < /dev/null > /dev/tcp/$node/4567" >/dev/null 2>&1; then
+          echo "Nodo $node está activo."
+          node_active=1
+          break
+        fi
+      fi
+    done
+    set -e
+    if [ "$node_active" -eq 0 ]; then
+      echo "Ningún otro nodo responde en el puerto 4567. Re-inicializando clúster (Bootstrap) para evitar bloqueo de apagado frío..."
+      EXTRA_ARGS+=("--wsrep-new-cluster")
+    else
+      echo "Uniéndose al clúster activo existente."
+    fi
+  else
+    echo "Bootstrap inicial del clúster Galera en ${GALERA_NODE_NAME}"
+    touch "$DATADIR/.galera_bootstrapped"
+    chown mysql:mysql "$DATADIR/.galera_bootstrapped"
+    EXTRA_ARGS+=("--wsrep-new-cluster")
+  fi
+elif [ "$GALERA_BOOTSTRAP" = "no" ]; then
+  echo "Esperando a que el nodo primario (db1) esté disponible en el puerto Galera (4567)..."
+  max_wait=120
+  elapsed=0
+  set +e
+  until timeout 3 bash -c "cat < /dev/null > /dev/tcp/db1/4567" > /dev/null 2>&1; do
+    if [ "$elapsed" -ge "$max_wait" ]; then
+      echo "WARN: db1 no respondió en ${max_wait}s. Intentando unirse de todas formas..."
+      break
+    fi
+    echo "  db1 no disponible aún (${elapsed}s / ${max_wait}s). Reintentando en 5s..."
+    sleep 5
+    elapsed=$((elapsed + 5))
+  done
+  set -e
+  echo "db1 disponible (o timeout alcanzado). Arrancando nodo secundario."
 fi
 
 echo "Arrancando MariaDB Galera: nodo=${GALERA_NODE_NAME}, cluster=${GALERA_CLUSTER_NAME}, address=${GALERA_CLUSTER_ADDRESS}"

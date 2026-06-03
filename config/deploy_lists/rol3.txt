@@ -1,4 +1,0 @@
-cluster-master-1
-cluster-master-2
-cluster-worker-1
-cluster-worker-2

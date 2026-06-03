@@ -8,12 +8,12 @@ Este proyecto implementa una solución de **aprovisionamiento baremetal automati
 
 ## 📖 Documentación Oficial
 
-Hemos dividido la documentación en módulos específicos para facilitar la lectura y comprensión del sistema. Por favor, revisa los documentos en orden:
+Hemos estructurado la documentación para cumplir de manera rigurosa con los requisitos del proyecto. Por favor, revisa los documentos en orden:
 
-1. 🏗️ **[01. Arquitectura y Diseño](file:///home/Chadry/esi/gyar/trabajo/docs/01_arquitectura.md)**: Explicación técnica de la topología de red, el modelo cliente-servidor (Host API) y el ciclo de vida del aprovisionamiento (PXE, Autoinstall).
-2. 🚀 **[02. Guía de Despliegue](file:///home/Chadry/esi/gyar/trabajo/docs/02_guia_despliegue.md)**: El paso a paso exhaustivo para desplegar la infraestructura desde cero y la estrategia para realizar la defensa de la práctica.
-3. ⚙️ **[03. Referencia de Configuración YAML](file:///home/Chadry/esi/gyar/trabajo/docs/03_referencia_yaml.md)**: Manual para entender cómo añadir o modificar nodos, configurar múltiples tarjetas de red (NAT + Internas) y el uso de plantillas de Cloud-Init.
-4. ✅ **[04. Roadmap y Tareas](file:///home/Chadry/esi/gyar/trabajo/docs/04_roadmap_y_tareas.md)**: Estado actual del desarrollo, hitos conseguidos y los próximos pasos de cara a la configuración con Ansible (Fase 2).
+1. ⚙️ **[01. Datos de Configuración](docs/01_datos_configuracion.md)**: Explicación de los datos de entrada (ficheros YAML) requeridos para definir redes y la parametrización hardware de cada nodo.
+2. 🗺️ **[02. Diagrama y Rutas](docs/02_diagrama_y_rutas.md)**: Diagrama de la topología de red (`main` e `internal`) y reglas de enrutamiento aplicadas en el nodo Jumpstart durante el despliegue y producción.
+3. 🚀 **[03. Manual de Administración](docs/03_manual_administracion.md)**: Procedimientos operativos estándar. Incluye los pasos de despliegue automatizado, y cómo escalar frontales web, base de datos y puestos *hot-desk*.
+4. 📋 **[04. Software Baseline](docs/04_software_baseline.md)**: Inventario detallado con las versiones exactas de SO, hipervisor y dependencias del orquestador.
 
 ---
 
@@ -22,55 +22,51 @@ Hemos dividido la documentación en módulos específicos para facilitar la lect
 La estructura del proyecto está diseñada para ser completamente escalable:
 
 ```text
-GAR/
-├── docs/                          # 📘 Documentación del proyecto
-│   ├── 01_arquitectura.md
-│   ├── 02_guia_despliegue.md
-│   ├── 03_referencia_yaml.md
-│   ├── 04_roadmap_y_tareas.md
-│   ├── 05_reparto_fase2.md
-│   └── GAR_P1.pdf / .txt          # Enunciado original
+GAR-pruebas/
+├── docs/                          # 📘 Documentación oficial del proyecto
+│   ├── 01_datos_configuracion.md
+│   ├── 02_diagrama_y_rutas.md
+│   ├── 03_manual_administracion.md
+│   └── 04_software_baseline.md
 ├── config/                        # ⚙️ Definiciones YAML orientadas a datos
 │   ├── networks.yml               # Parametrización de subredes (main, internal)
-│   └── nodes/                     # Directorio con los YAML de los 18 nodos
-├── provisioning/                  # 🚀 Fase 1: Aprovisionamiento Baremetal
-│   ├── orchestrator/              # 📦 Núcleo del orquestador en Python
-│   ├── scripts/                   # 🛠️ Scripts auxiliares (bootstrap)
-│   ├── services/                  # ⚙️ Archivos para demonios systemd
-│   ├── templates/                 # 📄 Plantillas base de PXE y Autoinstall
-│   └── vbox_api_server.py         # 🔌 Servidor API REST en el Host físico
-├── ansible/                       # ⚙️ Fase 2: Configuración de Servicios
-│   └── playbooks/                 # Playbooks y roles de configuración
-├── provisioner.py                 # 🚀 CLI principal de aprovisionamiento
-├── scripts/                       # 🛠️ Scripts auxiliares de instalación y control
-├── AGENTS.md                      # Instrucciones para Agentes de IA
-├── README.md                      # Este portal de inicio
-└── .gitignore                     # Archivo de ignorados
+│   ├── settings.yml               # Configuración global y puertos de API
+│   └── nodes/                     # Directorio con los YAML de cada máquina
+├── ansible/                       # ⚙️ Gestión de Configuración (Fase 2)
+│   └── playbooks/                 # Playbooks de Ansible
+├── provisioning/                  # 📦 Aprovisionamiento de VMs vacías (Fase 1)
+│   ├── jumpstart/                 # Código que se ejecuta en la VM base
+│   ├── scripts/                   # Scripts auxiliares (bootstrap_jumpstart.sh)
+│   ├── services/                  # Servicios systemd (vbox-api, config-manager)
+│   ├── templates/                 # Plantillas Jinja2 (PXE, DHCP, Cloud-Init)
+│   ├── host/                      # Scripts para ejecutar en el Host Anfitrión
+│   │   └── vbox_api_server.py     # Demonio de la API de VirtualBox
+
+├── cms-deployer                 # 🚀 CLI principal de aprovisionamiento
+├── AGENTS.md                      # Reglas estrictas de arquitectura
+└── README.md                      # Este portal de inicio
 ```
 
 ---
 
 ## ⚡ Inicio Rápido (Quick-Start)
 
-Si ya has leído la [Guía de Despliegue](file:///home/Chadry/esi/gyar/trabajo/docs/02_guia_despliegue.md), estos son los comandos de uso diario:
+Si ya has leído el [Manual de Administración](docs/03_manual_administracion.md), estos son los comandos de uso diario:
 
 ### En el Host Anfitrión (Tu PC)
 ```bash
-# Iniciar/Instalar la API de VirtualBox en segundo plano
-./scripts/vbox-api-helper.sh install
-
-# Validar que los archivos YAML no tienen colisiones de IP
-./provisioner.py validate
-
-# Desplegar la maqueta completa (crea VMs vacías e inicia el PXE Boot)
-./provisioner.py deploy
-
-# Destruir toda la maqueta y liberar disco (CUIDADO)
-./provisioner.py undeploy
+# Iniciar la API de VirtualBox (requiere Python 3)
+python3 provisioning/host/vbox_api_server.py
 ```
 
-### En el Servidor Jumpstart
+### En el Servidor Jumpstart (Desde dentro de la VM)
 ```bash
-# Levantar servicios de red (DHCP, TFTP, Apache) y generar configuraciones
-sudo ./provisioning/scripts/bootstrap_jumpstart.sh
+# Generar configuraciones PXE/DHCP (Requiere privilegios para reiniciar servicios)
+sudo ./cms-deployer generate-configs
+
+# Desplegar la maqueta completa (crea VMs vacías e inicia el PXE Boot)
+./cms-deployer deploy
+
+# Destruir toda la maqueta y liberar disco (CUIDADO)
+./cms-deployer undeploy
 ```

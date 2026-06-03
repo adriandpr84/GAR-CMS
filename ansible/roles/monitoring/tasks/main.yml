@@ -5,20 +5,7 @@
 
 # Las dependencias de agente (snmpd) ahora se instalan en el rol 'common' para todos los nodos.
 
-- name: "[SNMP] Desplegar configuracion dinamica snmpd.conf"
-  ansible.builtin.template:
-    src: snmpd.conf.j2
-    dest: /etc/snmp/snmpd.conf
-    owner: root
-    group: root
-    mode: '0644'
-  notify: "Reiniciar servicio snmpd"
 
-- name: "[SNMP] Garantizar que el servicio este corriendo y habilitado"
-  ansible.builtin.systemd:
-    name: snmpd
-    state: started
-    enabled: yes
 
 
 
@@ -26,9 +13,11 @@
 # 3. BLOQUE ESPECÍFICO: SOLO PARA EL SERVIDOR MONITORING
 # ==============================================================
 
-- name: "[CheckMK] Instalar motor Docker en el nodo de monitoreo"
+- name: "[CheckMK] Instalar motor Docker y dependencias en el nodo de monitoreo"
   ansible.builtin.apt:
-    name: docker.io
+    name: 
+      - docker.io
+      - python3-docker
     state: present
   when: "inventory_hostname == 'monitoring'"
 
@@ -56,4 +45,85 @@
       - "80:5000"
     volumes:
       - /opt/omd/sites:/opt/omd/sites
+    env:
+      CMK_PASSWORD: "admin-gar-2026"
+      CMK_SITE_ID: "monitoring"
   when: "inventory_hostname == 'monitoring'"
+
+- name: "[CheckMK] Esperar a que la API de CheckMK esté disponible"
+  ansible.builtin.uri:
+    url: "http://localhost/monitoring/check_mk/api/1.0/domain-types/host_config/collections/all"
+    method: GET
+    headers:
+      Authorization: "Bearer cmkadmin admin-gar-2026"
+      Accept: "application/json"
+  register: check_api
+  until: check_api.status == 200
+  retries: 30
+  delay: 5
+  when: "inventory_hostname == 'monitoring'"
+
+- name: "[CheckMK] Registrar nodos del inventario en CheckMK"
+  ansible.builtin.uri:
+    url: "http://localhost/monitoring/check_mk/api/1.0/domain-types/host_config/collections/all"
+    method: POST
+    headers:
+      Authorization: "Bearer cmkadmin admin-gar-2026"
+      Accept: "application/json"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      folder: "/"
+      host_name: "{{ item }}"
+      attributes:
+        ipaddress: "{{ hostvars[item]['ansible_host'] }}"
+        tag_agent: "no-agent"
+        tag_snmp_ds: "snmp-v2"
+        snmp_community:
+          type: "v1_v2_community"
+          community: "comunidad-gar"
+    status_code: [200, 201, 400, 409]
+  loop: "{{ groups['all'] }}"
+  when: "inventory_hostname == 'monitoring' and item != 'monitoring' and item != 'jumpstart'"
+
+- name: "[CheckMK] Lanzar descubrimiento de servicios para los nodos registrados"
+  ansible.builtin.uri:
+    url: "http://localhost/monitoring/check_mk/api/1.0/objects/host_config/{{ item }}/actions/discover_services/invoke"
+    method: POST
+    headers:
+      Authorization: "Bearer cmkadmin admin-gar-2026"
+      Accept: "application/json"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      mode: "new"
+    status_code: [200, 201, 204]
+  loop: "{{ groups['all'] }}"
+  when: "inventory_hostname == 'monitoring' and item != 'monitoring' and item != 'jumpstart'"
+
+- name: "[CheckMK] Obtener ETag de cambios pendientes"
+  ansible.builtin.uri:
+    url: "http://localhost/monitoring/check_mk/api/1.0/domain-types/activation_run/collections/pending_changes"
+    method: GET
+    headers:
+      Authorization: "Bearer cmkadmin admin-gar-2026"
+      Accept: "application/json"
+  register: pending_changes_res
+  when: "inventory_hostname == 'monitoring'"
+
+- name: "[CheckMK] Activar cambios pendientes"
+  ansible.builtin.uri:
+    url: "http://localhost/monitoring/check_mk/api/1.0/domain-types/activation_run/actions/activate-changes/invoke"
+    method: POST
+    headers:
+      Authorization: "Bearer cmkadmin admin-gar-2026"
+      Accept: "application/json"
+      Content-Type: "application/json"
+      If-Match: "{{ pending_changes_res.etag | default('') }}"
+    body_format: json
+    body:
+      redirect: false
+      sites: []
+      force_foreign_changes: true
+    status_code: [200, 201, 204]
+  when: "inventory_hostname == 'monitoring' and pending_changes_res is succeeded"

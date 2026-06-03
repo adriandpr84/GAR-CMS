@@ -72,11 +72,10 @@
         jump: MASQUERADE
       notify: Guardar reglas de iptables
 
-    - name: "NAT: Permitir Forwarding desde redes internas"
+    - name: "NAT: Permitir Forwarding desde redes internas (hacia internet y entre ellas)"
       iptables:
         chain: FORWARD
         in_interface: "{{ ['enp0s9', 'enp0s10', 'enp0s16', 'enp0s17'][ansible_loop.index0] }}"
-        out_interface: enp0s3
         jump: ACCEPT
       loop: "{{ networks }}"
       loop_control:
@@ -113,7 +112,7 @@
         state: directory
         owner: tftp
         group: tftp
-        mode: '0755'
+        mode: '0775'
       with_items:
         - /srv/tftp/pxelinux.cfg
         - /srv/tftp/images/ubuntu-22.04
@@ -155,6 +154,14 @@
         group: www-data
         mode: '0755'
 
+    - name: "HTTP: Crear directorio autoinstall"
+      file:
+        path: /var/www/html/autoinstall
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0775'
+
     - name: "HTTP: Descargar ISO de Ubuntu (Esto tardará unos minutos...)"
       get_url:
         url: "{{ iso_url }}"
@@ -172,58 +179,29 @@
       args:
         creates: /srv/tftp/images/ubuntu-22.04/vmlinuz
 
-    - name: "SSH: Asegurar que el usuario root tiene un par de claves"
+    - name: "SSH: Asegurar que el usuario admin tiene un par de claves (clave maestra)"
       user:
-        name: root
+        name: admin
         generate_ssh_key: yes
         ssh_key_bits: 2048
         ssh_key_file: .ssh/id_rsa
+        groups: tftp,www-data
+        append: yes
 
-    - name: "SSH: Asegurar directorio .ssh para admin"
-      file:
-        path: /home/admin/.ssh
-        state: directory
-        owner: admin
-        group: admin
-        mode: '0700'
 
-    - name: "SSH: Copiar clave privada de root a admin"
+    - name: "ORQUESTADOR: Copiar provisioning-coordinator.service"
       copy:
-        src: /root/.ssh/id_rsa
-        dest: /home/admin/.ssh/id_rsa
-        owner: admin
-        group: admin
-        mode: '0600'
-        remote_src: yes
-
-    - name: "SSH: Copiar clave publica de root a admin"
-      copy:
-        src: /root/.ssh/id_rsa.pub
-        dest: /home/admin/.ssh/id_rsa.pub
-        owner: admin
-        group: admin
+        src: "{{ repo_dir }}/provisioning/services/provisioning-coordinator.service"
+        dest: /etc/systemd/system/provisioning-coordinator.service
+        owner: root
         mode: '0644'
-        remote_src: yes
 
-    - name: "ORQUESTADOR: Generar configuraciones finales (PXE/DHCP/Autoinstall)"
-      command: "python3 provisioner.py generate-configs"
-      args:
-        chdir: "{{ repo_dir }}"
-      register: provisioner_out
-      changed_when: false
-
-    - name: "ORQUESTADOR: Copiar config-manager.service"
-      copy:
-        src: "{{ repo_dir }}/provisioning/services/config-manager.service"
-        dest: /etc/systemd/system/config-manager.service
-        remote_src: yes
-
-    - name: "ORQUESTADOR: Inyectar ruta del repositorio en config-manager.service"
+    - name: "ORQUESTADOR: Inyectar ruta del repositorio en provisioning-coordinator.service"
       replace:
-        path: /etc/systemd/system/config-manager.service
-        regexp: '/home/admin/gar'
+        path: /etc/systemd/system/provisioning-coordinator.service
+        regexp: '__REPO_DIR__'
         replace: "{{ repo_dir }}"
-      notify: Recargar e iniciar config-manager
+      notify: Recargar e iniciar provisioning-coordinator
 
     - name: "SISTEMA: Habilitar y arrancar servicios (Apache)"
       service:
@@ -250,9 +228,9 @@
         state: restarted
         enabled: yes
         
-    - name: Recargar e iniciar config-manager
+    - name: Recargar e iniciar provisioning-coordinator
       systemd:
         daemon_reload: yes
-        name: config-manager
+        name: provisioning-coordinator
         state: restarted
         enabled: yes

@@ -4,6 +4,19 @@
 # Requisitos: 9 (Seguridad/UFW) y 10 (Monitorización base/SNMP)
 # ============================================================
 
+- name: "RED: Comprobar conectividad a Internet (repositorio Ubuntu)"
+  ansible.builtin.wait_for:
+    host: archive.ubuntu.com
+    port: 80
+    timeout: 3
+  register: internet_check
+  ignore_errors: yes
+  changed_when: false
+
+- name: "RED: Establecer flag de conectividad a Internet"
+  ansible.builtin.set_fact:
+    internet_available: "{{ internet_check is succeeded }}"
+
 # ------------------------------------------------------------
 # 1. MONITORIZACIÓN BASE (SNMP)
 # ------------------------------------------------------------
@@ -11,7 +24,7 @@
   ansible.builtin.apt:
     name: snmpd
     state: present
-    update_cache: yes
+    update_cache: "{{ internet_available }}"
 
 - name: "SNMP: Desplegar configuracion dinamica snmpd.conf"
   ansible.builtin.template:
@@ -59,3 +72,5 @@
 - name: "UFW: Habilitar el firewall"
   community.general.ufw:
     state: enabled
+
+

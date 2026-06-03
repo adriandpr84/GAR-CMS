@@ -9,3 +9,6 @@ networks:
     # Esto permite que el LB haga NAT para toda la red main.
   - name: NAT
     type: nat
+  - name: intnet_internal
+    ip: "192.168.2.20"
+    gateway: ""

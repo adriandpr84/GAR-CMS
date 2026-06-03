@@ -1,43 +1,47 @@
 #!/usr/bin/env python3
-# ==============================================================================
-# vbox_api_server.py — REST API para VBoxManage en el Host Anfitrión
-# Asignatura: Gestión y Administración de Redes (GAR)
-# ==============================================================================
-# Servidor HTTP sin dependencias externas (solo stdlib) que expone endpoints
-# para gestionar máquinas virtuales de VirtualBox.
-#
-# Debe ejecutarse en el HOST (tu ordenador), no en el Jumpstart.
-# El Jumpstart le envía peticiones HTTP cuando necesita operar sobre VMs,
-# por ejemplo, cambiar el boot order tras instalar un SO.
-#
-# Uso directo:
-#   python3 provisioning/host/vbox_api_server.py
-#   python3 provisioning/host/vbox_api_server.py --port 7070 --bind 192.168.56.1
-#
-#
-# Verificar desde el Jumpstart:
-#   curl http://192.168.56.1:7070/health
-# ==============================================================================
+"""
+vbox_api_server.py — REST API para VBoxManage en el Host Anfitrión.
+Asignatura: Gestión y Administración de Redes (GAR)
+
+Servidor HTTP (stdlib) que expone endpoints REST para gestionar VMs de
+VirtualBox. Debe ejecutarse en el HOST, no en el Jumpstart.
+El Jumpstart le envía peticiones HTTP para crear, arrancar o reconfigurar VMs.
+
+Uso:
+  python3 provisioning/host/vbox_api_server.py
+  python3 provisioning/host/vbox_api_server.py --port 7070 --bind 192.168.56.1
+
+Verificar desde el Jumpstart:
+  curl http://192.168.56.1:7070/health
+
+Módulos:
+  vbox_helpers.py    — wrapper de bajo nivel sobre VBoxManage (subprocess)
+  vbox_operations.py — lógica de negocio: crear, borrar, arrancar, etc.
+"""
 
 import os
 import http.server
 import json
-import subprocess
 import logging
-import sys
 import argparse
 from urllib.parse import urlparse, parse_qs
-import threading
-import time
 
 from provisioning.jumpstart.parsers import load_settings_file
+from provisioning.host.vbox_helpers import _vbox, sanitize_vm_name, parse_vms_output
+from provisioning.host.vbox_operations import (
+    apply_specs_bulk,
+    start_vms,
+    stop_vms,
+    create_vms,
+    delete_vms,
+)
 
-# ── Configuración por defecto ──────────────────────────────────────────────────
-base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-settings = load_settings_file(os.path.join(base_dir, "config", "settings.yml"))
+# ── Configuración ──────────────────────────────────────────────────────────────
+_base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_settings  = load_settings_file(os.path.join(_base_dir, "config", "settings.yml"))
 
-DEFAULT_PORT = settings.get('host_api', {}).get('port', 7070)
-DEFAULT_BIND = settings.get('host_api', {}).get('ip', '0.0.0.0')
+DEFAULT_PORT = _settings.get("host_api", {}).get("port", 7070)
+DEFAULT_BIND = _settings.get("host_api", {}).get("ip", "0.0.0.0")
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -47,42 +51,19 @@ logging.basicConfig(
 )
 log = logging.getLogger("vbox-api")
 
-
-# ── Helpers VBoxManage ─────────────────────────────────────────────────────────
-
-def vbox(*args):
-    """Ejecuta un comando VBoxManage. Devuelve (ok: bool, output: str)."""
-    cmd = ["VBoxManage"] + list(args)
-    log.info("Ejecutando: %s", " ".join(cmd))
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        log.warning("VBoxManage error: %s", result.stderr.strip())
-        return False, result.stderr.strip()
-    return True, result.stdout.strip()
-
-
-def sanitize_vm_name(name):
-    """Elimina caracteres peligrosos de un nombre de VM."""
-    forbidden = set('"\';&|`$\\/<>')
-    return "".join(c for c in name if c not in forbidden)
-
-
-def parse_vms_output(raw):
-    """Extrae nombres de VM de la salida de 'VBoxManage list vms'."""
-    vms = []
-    for line in raw.splitlines():
-        if '"' in line:
-            try:
-                vms.append(line.split('"')[1])
-            except IndexError:
-                pass
-    return vms
+# Valores válidos para los parámetros de los endpoints
+_VALID_BOOT  = {"disk", "net", "dvd", "floppy", "none"}
+_VALID_TYPES = {"headless", "gui", "separate"}
+_VALID_MODES = {"poweroff", "acpipowerbutton", "savestate", "pause", "resume"}
 
 
 # ── Manejador HTTP ─────────────────────────────────────────────────────────────
 
 class VBoxAPIHandler(http.server.BaseHTTPRequestHandler):
-    """Manejador de peticiones HTTP para la API de VBoxManage."""
+    """
+    Manejador HTTP fino: valida la petición y delega en vbox_operations.
+    No contiene lógica de negocio; solo parseo HTTP, validación y respuesta.
+    """
 
     def log_message(self, fmt, *args):
         log.info("%s — %s", self.client_address[0], fmt % args)
@@ -103,57 +84,50 @@ class VBoxAPIHandler(http.server.BaseHTTPRequestHandler):
     def _error(self, code, message):
         self._json(code, {"status": "error", "message": message})
 
-    def _handle_vbox_error(self, err_output):
-        """Mapea errores conocidos de VBoxManage a códigos HTTP correctos."""
-        if "VBOX_E_OBJECT_NOT_FOUND" in err_output or "Could not find a registered machine" in err_output:
-            self._error(404, err_output)
-        elif "VBOX_E_INVALID_OBJECT_STATE" in err_output or "already locked" in err_output or "already running" in err_output:
-            self._error(409, err_output) # 409 Conflict
+    def _handle_vbox_error(self, err):
+        """Mapea errores de VBoxManage a códigos HTTP semánticos."""
+        if "VBOX_E_OBJECT_NOT_FOUND" in err or "Could not find a registered machine" in err:
+            self._error(404, err)
+        elif "VBOX_E_INVALID_OBJECT_STATE" in err or "already locked" in err or "already running" in err:
+            self._error(409, err)
         else:
-            self._error(500, err_output)
+            self._error(500, err)
 
     def _read_body(self):
         length = int(self.headers.get("Content-Length", 0))
         if length == 0:
             return {}
-        raw = self.rfile.read(length)
-        return json.loads(raw.decode("utf-8"))
+        return json.loads(self.rfile.read(length).decode("utf-8"))
 
     # ── GET ────────────────────────────────────────────────────────────────────
 
     def do_GET(self):
         parsed = urlparse(self.path)
         params = parse_qs(parsed.query)
-        path = parsed.path
+        path   = parsed.path
 
         # GET /health
         if path == "/health":
-            ok, _ = vbox("--version")
+            ok, _ = _vbox("--version")
             self._ok(service="vbox-api", vboxmanage_available=ok)
 
-        # GET /vbox/vms — listar todas las VMs registradas
+        # GET /vbox/vms
         elif path == "/vbox/vms":
-            ok, out = vbox("list", "vms")
-            if ok:
-                self._ok(vms=parse_vms_output(out))
-            else:
-                self._error(500, out)
+            ok, out = _vbox("list", "vms")
+            self._ok(vms=parse_vms_output(out)) if ok else self._error(500, out)
 
-        # GET /vbox/running-vms — listar VMs encendidas
+        # GET /vbox/running-vms
         elif path == "/vbox/running-vms":
-            ok, out = vbox("list", "runningvms")
-            if ok:
-                self._ok(vms=parse_vms_output(out))
-            else:
-                self._error(500, out)
+            ok, out = _vbox("list", "runningvms")
+            self._ok(vms=parse_vms_output(out)) if ok else self._error(500, out)
 
-        # GET /vbox/vm-info?vm=<nombre> — información de una VM
+        # GET /vbox/vm-info?vm=<nombre>
         elif path == "/vbox/vm-info":
             vm_name = params.get("vm", [None])[0]
             if not vm_name:
                 self._error(400, 'Parámetro "vm" requerido')
                 return
-            ok, out = vbox("showvminfo", sanitize_vm_name(vm_name), "--machinereadable")
+            ok, out = _vbox("showvminfo", sanitize_vm_name(vm_name), "--machinereadable")
             if ok:
                 info = {}
                 for line in out.splitlines():
@@ -171,221 +145,79 @@ class VBoxAPIHandler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
-
         try:
             body = self._read_body()
         except (json.JSONDecodeError, ValueError) as e:
             self._error(400, f"JSON inválido en el cuerpo: {e}")
             return
 
-        # POST /vbox/set-boot-order
-        # Body: {"vm": "nombre", "boot": ["disk", "net", "none", "none"]}
-        if path == "/vbox/set-boot-order":
-            vm_name = body.get("vm", "").strip()
-            boot    = body.get("boot", ["disk", "net", "none", "none"])
-
-            if not vm_name:
-                self._error(400, 'Campo "vm" requerido')
-                return
-
-            valid_boot_values = {"disk", "net", "dvd", "floppy", "none"}
-            if not isinstance(boot, list) or len(boot) < 1:
-                self._error(400, '"boot" debe ser una lista con al menos un elemento')
-                return
-            for b in boot:
-                if b not in valid_boot_values:
-                    self._error(400, f'Valor de boot inválido: "{b}". Válidos: {sorted(valid_boot_values)}')
-                    return
-
-            # Rellenar hasta 4 slots con "none"
-            boot = (boot + ["none", "none", "none", "none"])[:4]
-
-            args = []
-            for i, b in enumerate(boot, 1):
-                args += [f"--boot{i}", b]
-
-            ram_mb = body.get("ram_mb")
-            cpus = body.get("cpus")
-            if ram_mb:
-                args += ["--memory", str(ram_mb)]
-            if cpus:
-                args += ["--cpus", str(cpus)]
-
-            def apply_boot_order_bg():
-                log.info(f"[{vm_name}] Comprobando estado de la VM antes de aplicar specs finales y orden de arranque...")
-                max_retries = 90 # 3 minutos
-                for _ in range(max_retries):
-                    # Consultar estado de forma segura sin modificar nada
-                    ok, out = vbox("showvminfo", sanitize_vm_name(vm_name), "--machinereadable")
-                    if ok and 'VMState="poweroff"' in out:
-                        log.info(f"[{vm_name}] La VM se ha apagado. Aplicando configuración...")
-                        bg_ok, bg_out = vbox("modifyvm", sanitize_vm_name(vm_name), *args)
-                        if bg_ok:
-                            log.info(f"[{vm_name}] ¡Orden de arranque actualizado! La VM permanecerá apagada hasta el final del despliegue.")
-                        else:
-                            log.error(f"[{vm_name}] Error al modificar el boot order: {bg_out}")
-                        return
-                    # Si sigue encendida, esperamos 2 segundos y volvemos a preguntar
-                    time.sleep(2)
-                
-                log.error(f"[{vm_name}] Timeout: la VM no se apagó tras 3 minutos de espera.")
-
-            # Responder 200 OK inmediatamente al curl para que la VM pueda seguir su curso y apagarse
-            threading.Thread(target=apply_boot_order_bg, daemon=True).start()
-            self._ok(message=f'Operación puesta en cola. Esperando a que "{vm_name}" se apague de forma segura para aplicar los cambios.')
+        # POST /vbox/modifyvm
+        # Body: {"nodes": [{"vm": "nombre", "boot": ["disk","net","none","none"], "ram_mb": N, "cpus": N}, ...]}
+        if path == "/vbox/modifyvm":
+            nodes_specs = body.get("nodes", [])
+            if not isinstance(nodes_specs, list) or not nodes_specs:
+                self._error(400, '"nodes" debe ser una lista no vacía'); return
+            for spec in nodes_specs:
+                if not spec.get("vm"):
+                    self._error(400, 'Cada nodo debe tener campo "vm"'); return
+                for b in spec.get("boot", []):
+                    if b not in _VALID_BOOT:
+                        self._error(400, f'Valor de boot inválido: "{b}". Válidos: {sorted(_VALID_BOOT)}'); return
+            successes, failures = apply_specs_bulk(nodes_specs)
+            if failures:
+                self._error(500, "Fallos al aplicar specs: " + "; ".join(failures))
+            else:
+                self._ok(message=f"Specs aplicadas a {len(successes)} VMs: {', '.join(successes)}")
 
         # POST /vbox/start
-        # Body: {"vms": ["nombre1", "nombre2"], "type": "headless"}  (type opcional, default headless)
+        # Body: {"vms": ["nombre1", ...], "type": "headless"}
         elif path == "/vbox/start":
-            vms      = body.get("vms", [])
-            vm_type  = body.get("type", "headless")
-
+            vms     = body.get("vms", [])
+            vm_type = body.get("type", "headless")
             if not vms or not isinstance(vms, list):
-                self._error(400, 'Campo "vms" requerido y debe ser una lista')
-                return
-            if vm_type not in {"headless", "gui", "separate"}:
-                self._error(400, f'Tipo de inicio inválido: "{vm_type}". Válidos: headless, gui, separate')
-                return
-
-            errors = []
-            for vm_name in vms:
-                ok, out = vbox("startvm", sanitize_vm_name(vm_name), "--type", vm_type)
-                if not ok:
-                    errors.append(f"{vm_name}: {out.strip()}")
-            
+                self._error(400, 'Campo "vms" requerido (lista)'); return
+            if vm_type not in _VALID_TYPES:
+                self._error(400, f'Tipo inválido: "{vm_type}". Válidos: {sorted(_VALID_TYPES)}'); return
+            errors = start_vms(vms, vm_type)
             if errors:
                 self._error(500, "Errores iniciando VMs: " + " | ".join(errors))
             else:
-                self._ok(message=f'{len(vms)} VMs iniciadas en modo {vm_type}')
+                self._ok(message=f"{len(vms)} VMs iniciadas en modo {vm_type}")
 
         # POST /vbox/stop
-        # Body: {"vms": ["nombre1", "nombre2"], "mode": "acpipowerbutton"}  (mode opcional, default acpipowerbutton)
+        # Body: {"vms": ["nombre1", ...], "mode": "acpipowerbutton"}
         elif path == "/vbox/stop":
             vms  = body.get("vms", [])
             mode = body.get("mode", "acpipowerbutton")
-
             if not vms or not isinstance(vms, list):
-                self._error(400, 'Campo "vms" requerido y debe ser una lista')
-                return
-            if mode not in {"poweroff", "acpipowerbutton", "savestate", "pause", "resume"}:
-                self._error(400, f'Modo inválido: "{mode}"')
-                return
-
-            errors = []
-            for vm_name in vms:
-                ok, out = vbox("controlvm", sanitize_vm_name(vm_name), mode)
-                if not ok:
-                    errors.append(f"{vm_name}: {out.strip()}")
-            
+                self._error(400, 'Campo "vms" requerido (lista)'); return
+            if mode not in _VALID_MODES:
+                self._error(400, f'Modo inválido: "{mode}". Válidos: {sorted(_VALID_MODES)}'); return
+            errors = stop_vms(vms, mode)
             if errors:
                 self._error(500, "Errores deteniendo VMs: " + " | ".join(errors))
             else:
-                self._ok(message=f'{len(vms)} VMs detenidas ({mode})')
+                self._ok(message=f"{len(vms)} VMs detenidas ({mode})")
 
         # POST /vbox/create-vms
-        # Body: {"vms": [...]}
+        # Body: {"vms": [{...}, ...]}
         elif path == "/vbox/create-vms":
             vms = body.get("vms", [])
             if not isinstance(vms, list):
-                self._error(400, '"vms" debe ser una lista')
-                return
-
-            vm_dir = os.path.expanduser("~/VirtualBox VMs")
-
-            ok, out = vbox("list", "vms")
-            existing_vms = parse_vms_output(out) if ok else []
-
-            log_msgs = []
-            for vm in vms:
-                name = vm.get("name")
-                if not name:
-                    continue
-                
-                if name in existing_vms:
-                    vbox("controlvm", sanitize_vm_name(name), "poweroff")
-                    vbox("unregistervm", sanitize_vm_name(name), "--delete")
-                    log_msgs.append(f"Eliminada VM previa '{name}'")
-                
-                cpus = str(vm.get("cpus", 1))
-                ram = str(vm.get("ram_mb", 1024))
-                disk_gb = vm.get("disk_gb", 20)
-                ostype = vm.get("ostype", "Ubuntu_64")
-                vram = str(vm.get("vram", 16))
-                graphicscontroller = vm.get("graphicscontroller", "vmsvga")
-                
-                # 1. Crear VM
-                ok, err = vbox("createvm", "--name", sanitize_vm_name(name), "--ostype", ostype, "--register")
-                if not ok:
-                    self._error(500, f"Error creando VM {name}: {err}")
-                    return
-
-                # 2. Configurar hardware y redes
-                cmd_modify = [
-                    "modifyvm", sanitize_vm_name(name),
-                    "--cpus", cpus,
-                    "--memory", ram,
-                    "--boot1", "net",
-                    "--boot2", "disk",
-                    "--boot3", "none",
-                    "--boot4", "none",
-                    "--vram", vram,
-                    "--graphicscontroller", graphicscontroller
-                ]
-                networks = vm.get("networks", [])
-                for idx, net in enumerate(networks, start=1):
-                    net_type = net.get("type", "intnet")
-                    cmd_modify += [f"--nic{idx}", net_type]
-                    if net_type == "intnet":
-                        cmd_modify += [f"--intnet{idx}", net.get("name", "")]
-                    if net.get("mac"):
-                        mac_clean = net.get("mac").replace(":", "").replace("-", "").upper()
-                        cmd_modify += [f"--macaddress{idx}", mac_clean]
-                
-                vbox(*cmd_modify)
-
-                # 3. Crear controlador SATA y disco
-                vbox("storagectl", sanitize_vm_name(name), "--name", "SATA Controller", "--add", "sata", "--controller", "IntelAHCI")
-                
-                disk_path = os.path.join(vm_dir, sanitize_vm_name(name), f"{sanitize_vm_name(name)}.vdi")
-                os.makedirs(os.path.dirname(disk_path), exist_ok=True)
-                
-                if vbox("createmedium", "disk", "--filename", disk_path, "--size", str(disk_gb * 1024), "--format", "VDI")[0]:
-                    vbox("storageattach", sanitize_vm_name(name), "--storagectl", "SATA Controller", "--port", "0", "--device", "0", "--type", "hdd", "--medium", disk_path)
-
-                # 4. Encender VM
-                vbox("startvm", sanitize_vm_name(name), "--type", "headless")
-                log_msgs.append(f"Desplegada y encendida VM '{name}'")
-
-            self._ok(message="Creación masiva completada", details=log_msgs)
+                self._error(400, '"vms" debe ser una lista'); return
+            log_msgs, errors = create_vms(vms)
+            if errors:
+                self._error(500, "Errores creando VMs: " + " | ".join(errors))
+            else:
+                self._ok(message="Creación masiva completada", details=log_msgs)
 
         # POST /vbox/delete-vms
-        # Body: {"vms": [{"name": "..."}]}
+        # Body: {"vms": [{"name": "..."}, ...]}
         elif path == "/vbox/delete-vms":
             vms = body.get("vms", [])
             if not isinstance(vms, list):
-                self._error(400, '"vms" debe ser una lista')
-                return
-
-            ok, out = vbox("list", "vms")
-            existing_vms = parse_vms_output(out) if ok else []
-
-            log_msgs = []
-            for vm in vms:
-                name = vm.get("name")
-                if not name:
-                    continue
-                
-                if name in existing_vms:
-                    vbox("controlvm", sanitize_vm_name(name), "poweroff")
-                    
-                    # Reintentar el borrado hasta 5 veces para evitar el VBOX_E_INVALID_OBJECT_STATE (lock)
-                    for _ in range(5):
-                        if vbox("unregistervm", sanitize_vm_name(name), "--delete")[0]:
-                            log_msgs.append(f"VM '{name}' eliminada")
-                            break
-                        import time
-                        time.sleep(1)
-            
+                self._error(400, '"vms" debe ser una lista'); return
+            log_msgs = delete_vms(vms)
             self._ok(message="Borrado masivo completado", details=log_msgs)
 
         else:
@@ -406,14 +238,18 @@ def main():
     log.info("  GAR — VBox API Server")
     log.info("  Escuchando en http://%s:%d", args.bind, args.port)
     log.info("=" * 60)
-    log.info("Endpoints disponibles:")
-    log.info("  GET  /health")
-    log.info("  GET  /vbox/vms")
-    log.info("  GET  /vbox/running-vms")
-    log.info("  GET  /vbox/vm-info?vm=<nombre>")
-    log.info("  POST /vbox/set-boot-order  {\"vm\": \"...\", \"boot\": [\"disk\", \"net\"]}")
-    log.info("  POST /vbox/start           {\"vm\": \"...\", \"type\": \"headless\"}")
-    log.info("  POST /vbox/stop            {\"vm\": \"...\", \"mode\": \"poweroff\"}")
+    for endpoint in [
+        "GET  /health",
+        "GET  /vbox/vms",
+        "GET  /vbox/running-vms",
+        "GET  /vbox/vm-info?vm=<nombre>",
+        'POST /vbox/modifyvm        {"nodes": [{"vm": "...", "boot": ["disk","net"], "ram_mb": N, "cpus": N}]}',
+        'POST /vbox/start           {"vms": ["..."], "type": "headless"}',
+        'POST /vbox/stop            {"vms": ["..."], "mode": "poweroff"}',
+        'POST /vbox/create-vms      {"vms": [...]}',
+        'POST /vbox/delete-vms      {"vms": [{"name": "..."}]}',
+    ]:
+        log.info("  %s", endpoint)
     log.info("=" * 60)
 
     server = http.server.HTTPServer((args.bind, args.port), VBoxAPIHandler)

@@ -5,9 +5,9 @@
   apt:
     name: glusterfs-server
     state: present
-    update_cache: yes
+    update_cache: "{{ internet_available | default(false) }}"
 
-- name: "UFW: Abrir puertos para GlusterFS"
+- name: "UFW: Abrir puertos de gestión GlusterFS"
   community.general.ufw:
     rule: allow
     port: "{{ item }}"
@@ -15,7 +15,32 @@
   loop:
     - '24007'
     - '24008'
-    - '49152:49160'
+
+- name: "UFW: Abrir rango completo de puertos de bricks GlusterFS desde subred main"
+  community.general.ufw:
+    rule: allow
+    port: '49152:65535'
+    proto: tcp
+    src: '192.168.1.0/24'
+
+- name: "UFW: Abrir rango completo de puertos de bricks GlusterFS desde subred internal"
+  community.general.ufw:
+    rule: allow
+    port: '49152:65535'
+    proto: tcp
+    src: '192.168.2.0/24'
+
+- name: "UFW: Permitir tráfico GlusterFS desde subred interna (main)"
+  community.general.ufw:
+    rule: allow
+    src: '192.168.1.0/24'
+    proto: tcp
+
+- name: "UFW: Permitir tráfico GlusterFS desde subred interna (internal)"
+  community.general.ufw:
+    rule: allow
+    src: '192.168.2.0/24'
+    proto: tcp
 
 - name: "Asegurar que el servicio GlusterFS está iniciado y habilitado"
   service:
@@ -29,11 +54,20 @@
     state: directory
     mode: '0755'
 
-- name: "Crear e iniciar el volumen GlusterFS (gv0)"
-  gluster_volume:
-    state: started
-    name: gv0
-    bricks: /gluster/brick1
-    replicas: 1
-    force: yes
+- name: "Crear el volumen GlusterFS (gv0)"
+  command: gluster volume create gv0 {{ inventory_hostname }}:/gluster/brick1 force
+  register: create_result
+  failed_when: 
+    - create_result.rc != 0
+    - "'already exists' not in create_result.stderr and 'already exists' not in create_result.stdout"
+  changed_when: create_result.rc == 0
+  run_once: true
+
+- name: "Iniciar el volumen GlusterFS (gv0)"
+  command: gluster volume start gv0
+  register: start_result
+  failed_when: 
+    - start_result.rc != 0
+    - "'already started' not in start_result.stderr and 'already started' not in start_result.stdout"
+  changed_when: start_result.rc == 0
   run_once: true

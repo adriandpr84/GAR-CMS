@@ -70,6 +70,15 @@
   register: db_stack_deploy_result
   changed_when: "'Creating' in db_stack_deploy_result.stdout or 'Updating' in db_stack_deploy_result.stdout"
 
+- name: "DB: esperar a que el nodo primario (db1) levante el servicio en el puerto 3306"
+  wait_for:
+    host: "{{ hostvars[db_node_1].ansible_host }}"
+    port: 3306
+    state: started
+    timeout: 120
+  delegate_to: "{{ swarm_manager_primary }}"
+  run_once: true
+
 - name: "DB: esperar a que existan los servicios del stack"
   shell: "docker stack services {{ db_stack_name }} --format '{% raw %}{{.Name}}{% endraw %}' | wc -l"
   register: db_services_count

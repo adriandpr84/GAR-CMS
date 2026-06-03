@@ -8,49 +8,74 @@ YELLOW = '\033[93m'
 CYAN = '\033[96m'
 RED = '\033[91m'
 NC = '\033[0m'
+import yaml
+
+def _generate_ansible_inventory(nodes, repo_root):
+    """Genera dinámicamente el archivo hosts.yml de Ansible basado en los nodos YAML."""
+    print(f"[{CYAN}*{NC}] Generando inventario dinámico de Ansible...")
+    
+    inventory = {
+        'all': {
+            'vars': {
+                'ansible_user': 'admin',
+                'ansible_ssh_private_key_file': '/home/admin/.ssh/id_rsa'
+            },
+            'children': {}
+        }
+    }
+    
+    children = inventory['all']['children']
+    
+    for node in nodes:
+        name = node.get('name')
+        if name == 'jumpstart':
+            continue
+            
+        node_type = node.get('type')
+        if not node_type:
+            continue
+            
+        networks = node.get('networks', [])
+        if not networks:
+            continue
+            
+        ip = networks[0].get('ip')
+        if not ip:
+            continue
+            
+        if node_type not in children:
+            children[node_type] = {'hosts': {}}
+            
+        children[node_type]['hosts'][name] = {'ansible_host': ip}
+        
+    inventory_path = os.path.join(repo_root, 'ansible', 'inventory', 'hosts.yml')
+    os.makedirs(os.path.dirname(inventory_path), exist_ok=True)
+    
+    try:
+        with open(inventory_path, 'w') as f:
+            yaml.dump(inventory, f, default_flow_style=False, sort_keys=False)
+        print(f"[{GREEN}+{NC}] Inventario Ansible generado exitosamente en {inventory_path}")
+    except Exception as e:
+        print(f"[{RED}-{NC}] Error generando inventario Ansible: {e}")
 
 def get_jumpstart_pubkey(ssh_user='admin'):
-    """Lee la clave pública SSH local del jumpstart. Genera una de prueba si no existe."""
+    """Lee la clave pública SSH del jumpstart. Busca en el home de admin y root."""
     key_paths = [
-        "/root/.ssh/id_rsa.pub",
         f"/home/{ssh_user}/.ssh/id_rsa.pub",
+        "/root/.ssh/id_rsa.pub",
         os.path.expanduser("~/.ssh/id_rsa.pub")
     ]
     for path in key_paths:
         if os.path.exists(path):
             with open(path, 'r') as f:
                 return f.read().strip()
-                
-    print(f"[{YELLOW}!{NC}] No se encontró clave pública SSH local. Generando un nuevo par de claves RSA...")
-    default_key_path = "/root/.ssh/id_rsa" if os.geteuid() == 0 else os.path.expanduser("~/.ssh/id_rsa")
-    os.makedirs(os.path.dirname(default_key_path), exist_ok=True)
-    
-    try:
-        subprocess.run(["ssh-keygen", "-t", "rsa", "-b", "2048", "-f", default_key_path, "-N", ""], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        with open(default_key_path + ".pub", 'r') as f:
-            return f.read().strip()
-    except Exception as e:
-        print(f"[{RED}-{NC}] Error generando la clave SSH: {e}")
-        return ""
-def _setup_target_paths(base_dir):
-    """Establece y crea los directorios de destino dependiendo de si es entorno real o local."""
-    dhcp_config_path = "/etc/dhcp/dhcpd.conf"
-    tftp_pxe_dir = "/srv/tftp/pxelinux.cfg"
-    web_autoinstall_dir = "/var/www/html/autoinstall"
-    
-    is_live_server = os.path.exists("/srv/tftp") or os.path.exists("/etc/dhcp")
-    
-    if not is_live_server:
-        print("[!] Entorno Jumpstart real no detectado. Generando en carpeta local para previsualización...")
-        dhcp_config_path = os.path.join(base_dir, ".local_output", "dhcp", "dhcpd.conf")
-        tftp_pxe_dir = os.path.join(base_dir, ".local_output", "pxe", "pxelinux.cfg")
-        web_autoinstall_dir = os.path.join(base_dir, ".local_output", "autoinstall")
-        
-    os.makedirs(os.path.dirname(dhcp_config_path), exist_ok=True)
-    os.makedirs(tftp_pxe_dir, exist_ok=True)
-    os.makedirs(web_autoinstall_dir, exist_ok=True)
-    
-    return dhcp_config_path, tftp_pxe_dir, web_autoinstall_dir, is_live_server
+
+    print(f"[{RED}-{NC}] Error: No se encontró ninguna clave pública SSH.")
+    print(f"    Genera una con:  ssh-keygen -t rsa -b 2048 -f /home/{ssh_user}/.ssh/id_rsa -N \"\"")
+    print(f"    O ejecuta el playbook de Ansible del jumpstart para generarla automáticamente.")
+    raise SystemExit(1)
+
+
 
 def _get_jinja_env(templates_dir):
     """Inicializa y devuelve el entorno de Jinja2."""
@@ -61,16 +86,28 @@ def _get_jinja_env(templates_dir):
     )
 
 def _generate_dhcp_config(nodes, networks_list, dhcp_config_path, jinja_env):
-    """Genera el fichero de configuración de DHCP."""
+    """Genera el fichero de configuración de DHCP. Devuelve True si cambió, False si no."""
     print(f"[{CYAN}*{NC}] Generando archivo DHCP global...")
     
     try:
         template = jinja_env.get_template('dhcpd.conf.j2')
         dhcp_content = template.render(nodes=nodes, networks=networks_list)
+        
+        # Comprobar si ya existe y si su contenido es idéntico
+        if os.path.exists(dhcp_config_path):
+            with open(dhcp_config_path, 'r') as f:
+                current_content = f.read()
+            if current_content == dhcp_content:
+                print(f"[{GREEN}✓{NC}] El archivo DHCP no ha cambiado. Se omite la escritura.")
+                return False
+                
         with open(dhcp_config_path, 'w') as f:
             f.write(dhcp_content)
+        print(f"[{GREEN}+{NC}] Archivo DHCP actualizado en {dhcp_config_path}")
+        return True
     except Exception as e:
         print(f"[{RED}-{NC}] Error generando DHCP: {e}")
+        return False
 
 def _generate_pxe_menu(node, jumpstart_ip, tftp_pxe_dir, jinja_env):
     """Genera el archivo de menú PXELINUX específico para la MAC de un nodo."""
@@ -108,20 +145,20 @@ def _generate_autoinstall_files(node, jumpstart_ip, ssh_key, templates_dir, web_
     defaults = settings.get('defaults', {})
     
     vm_user = auth_config.get('username', defaults.get('vm_user', 'admin'))
-    vm_password_raw = auth_config.get('password', defaults.get('vm_password', 'secreto'))
-    
-    if not vm_password_raw.startswith('$6$'):
-        # Usamos openssl para generar el hash de forma compatible y evitar la librería crypt que es obsoleta en Python 3.13
-        try:
-            result = subprocess.run(["openssl", "passwd", "-6", vm_password_raw], capture_output=True, text=True, check=True)
-            vm_password_hash = result.stdout.strip()
-        except Exception as e:
-            print(f"[{RED}-{NC}] Advertencia: no se pudo hashear la contraseña con openssl: {e}")
-            vm_password_hash = vm_password_raw
-    else:
-        vm_password_hash = vm_password_raw
-        
+    vm_password_hash = auth_config.get('password', defaults.get('vm_password', ''))
+
+    if not vm_password_hash:
+        print(f"[{RED}-{NC}] Error: No se encontró contraseña para el nodo '{node.get('name')}'. Define 'password' (en formato hash $6$) en el YAML del nodo o en settings.yml.")
+        raise SystemExit(1)
+
+    if not vm_password_hash.startswith('$'):
+        print(f"[{RED}-{NC}] Error: La contraseña del nodo '{node.get('name')}' no está hasheada.")
+        print(f"    Para Ubuntu Autoinstall es OBLIGATORIO usar un hash (ej. $6$...).")
+        print(f"    Genera un hash válido con: openssl passwd -6 tu_contraseña")
+        raise SystemExit(1)
+
     callback_port = settings.get('jumpstart', {}).get('callback_port', 8081)
+
 
     # user-data (Jinja2)
     try:
@@ -157,13 +194,19 @@ def generate_pxe_configs(nodes, templates_dir=None):
     ssh_key = get_jumpstart_pubkey(jumpstart_user)
     networks_list = load_networks_file(os.path.join(repo_root, "config", "networks.yml"))
     
-    dhcp_config_path, tftp_pxe_dir, web_autoinstall_dir, is_live_server = _setup_target_paths(provisioning_dir)
+    dhcp_config_path = "/etc/dhcp/dhcpd.conf"
+    tftp_pxe_dir = "/srv/tftp/pxelinux.cfg"
+    web_autoinstall_dir = "/var/www/html/autoinstall"
+    
+    os.makedirs(os.path.dirname(dhcp_config_path), exist_ok=True)
+    os.makedirs(tftp_pxe_dir, exist_ok=True)
+    os.makedirs(web_autoinstall_dir, exist_ok=True)
     
     # Configurar entorno Jinja2
     jinja_env = _get_jinja_env(templates_dir)
     
     # 1. Generar DHCP global
-    _generate_dhcp_config(nodes, networks_list, dhcp_config_path, jinja_env)
+    dhcp_changed = _generate_dhcp_config(nodes, networks_list, dhcp_config_path, jinja_env)
     
     # 2. Generar ficheros por nodo
     processed_nodes = 0
@@ -189,12 +232,19 @@ def generate_pxe_configs(nodes, templates_dir=None):
     if processed_nodes > 0:
         print(f"[{GREEN}+{NC}] Generados menús PXE y plantillas Cloud-Init para {processed_nodes} nodos.")
 
-    # 3. Reiniciar servicios
-    if is_live_server:
-        print(f"[{CYAN}*{NC}] Reiniciando servicios en el Jumpstart...")
-        subprocess.run(["systemctl", "restart", "isc-dhcp-server"])
-        subprocess.run(["systemctl", "restart", "tftpd-hpa"])
-        subprocess.run(["systemctl", "restart", "apache2"])
-        print(f"[{GREEN}+{NC}] Servicios DHCP, TFTP y HTTP actualizados y activos.")
+    # 3. Generar inventario de Ansible
+    _generate_ansible_inventory(nodes, repo_root)
+
+    # 4. Reiniciar servicios si es necesario
+    if dhcp_changed:
+        print(f"[{CYAN}*{NC}] Se detectaron cambios en el DHCP. Reiniciando isc-dhcp-server...")
+        try:
+            subprocess.run(["systemctl", "restart", "isc-dhcp-server"], check=True)
+            print(f"[{GREEN}+{NC}] Servicio DHCP actualizado y activo.")
+        except subprocess.CalledProcessError as e:
+            print(f"[{YELLOW}!{NC}] Advertencia: Hubo un problema reiniciando isc-dhcp-server ({e}). ¿Tienes permisos de sudo?")
+    else:
+        print(f"[{GREEN}✓{NC}] Configuración DHCP sin cambios. No es necesario reiniciar isc-dhcp-server.")
         
+    print(f"[{GREEN}✓{NC}] Los servicios TFTP y HTTP no requieren reinicio (leen los archivos en caliente).")
     print(f"[{GREEN}✓{NC}] Generación de configuraciones finalizada exitosamente.")
