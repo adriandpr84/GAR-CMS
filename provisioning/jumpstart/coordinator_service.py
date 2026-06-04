@@ -144,13 +144,17 @@ class CoordinatorHandler(http.server.BaseHTTPRequestHandler):
             log.info(f"Peticion de aprovisionamiento manual para {len(vms)} VMs. Lanzando en background...")
 
             def run_provision_wrapper():
+                success = False
                 try:
-                    provision_all_nodes(vms, become_password=become_password)
+                    success = provision_all_nodes(vms, become_password=become_password)
                 finally:
                     with state.lock:
                         if state.status == "ANSIBLE_PROVISIONING":
                             state.status = "IDLE"
-                            log.info("Aprovisionamiento manual finalizado. Estado restaurado a IDLE.")
+                            if success:
+                                log.info("Aprovisionamiento manual finalizado con EXITO. Estado restaurado a IDLE.")
+                            else:
+                                log.error("Aprovisionamiento manual finalizado con ERRORES. Estado restaurado a IDLE.")
 
             threading.Thread(target=run_provision_wrapper, daemon=True).start()
             self._respond(200, json.dumps({"status": "ok", "message": "Aprovisionamiento iniciado en segundo plano"}))
@@ -300,13 +304,19 @@ def process_node_ready(node_name):
         log.info(f"{MAGENTA}[ANSIBLE]{NC} Entregando el control a Ansible. Iniciando aprovisionamiento...")
         with state.lock:
             become_password = state.become_password
-        provision_all_nodes(nodes_to_provision, become_password=become_password)
         
-        # Al terminar todo el bloque de Ansible (que puede tardar minutos), reiniciamos el estado
-        with state.lock:
-            state.status = "IDLE"
-            state.completed_nodes = []
-            log.info("Despliegue global finalizado. Orquestador vuelve a estado IDLE.")
+        success = False
+        try:
+            success = provision_all_nodes(nodes_to_provision, become_password=become_password)
+        finally:
+            # Al terminar todo el bloque de Ansible (que puede tardar minutos), reiniciamos el estado
+            with state.lock:
+                state.status = "IDLE"
+                state.completed_nodes = []
+                if success:
+                    log.info("Despliegue global finalizado con EXITO. Orquestador vuelve a estado IDLE.")
+                else:
+                    log.error("Despliegue global finalizado con ERRORES. Orquestador vuelve a estado IDLE.")
 
 def run_callback_server(nodes, host_api_url, port=8081, batch_size=3):
     global host_api_global

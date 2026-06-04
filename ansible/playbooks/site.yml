@@ -11,7 +11,7 @@
 # ==============================================================
 
 # ── Rol 0: Base / Security / Monitoring ───────────────────────
-- name: "Rol 0 — Tareas comunes (UFW y SNMP)"
+- name: "Rol 0 — Tareas comunes (UFW)"
   hosts: all
   become: yes
   roles:
@@ -51,14 +51,24 @@
   tags: web-frontend
 
 # ── Rol 5: Observability ────────────────────────────────────────
-- name: "Rol 5 — Monitorización (CheckMK + SNMP)"
+- name: "Rol 5 — Monitorización (CheckMK)"
   hosts: monitoring
   become: yes
   roles:
     - role: monitoring
   tags: monitoring
 
-# ── Rol 6: Hotdesks ───────────────────────────────────────────
+# ── Agente CheckMK en todos los nodos ─────────────────────────
+- name: "CheckMK Agent — Instalar agente nativo en todos los nodos"
+  hosts: all
+  become: yes
+  roles:
+    - role: checkmk-agent
+  tags:
+    - common
+    - checkmk-agent
+
+# ── Rol 6: Hotdesks ──────────────────
 - name: "Rol 6 — Puestos de trabajo (Hotdesks)"
   hosts: hotdesk
   become: yes
@@ -73,47 +83,30 @@
   vars_files:
     - "../../config/networks.yml"
   tasks:
-    - name: "RED: Eliminar gateway antiguo de cloud-init (Nodos Main)"
-      replace:
-        path: /etc/netplan/50-cloud-init.yaml
-        regexp: '^\s*gateway4:.*$'
-        replace: ''
-      when: "inventory_hostname in groups['web-frontend'] or inventory_hostname in groups['hotdesk']"
-
-    - name: "RED: Eliminar gateway antiguo de cloud-init (Nodos Internal)"
-      replace:
-        path: /etc/netplan/50-cloud-init.yaml
-        regexp: '^\s*gateway4:.*$'
-        replace: ''
-      when: "inventory_hostname in groups['cluster-node'] or inventory_hostname in groups['storage'] or inventory_hostname in groups['monitoring']"
-
-    - name: "RED: Cambiar Default Gateway al Load Balancer (Nodos Main)"
-      copy:
-        dest: /etc/netplan/99-gateway-override.yaml
-        content: |
-          network:
-            version: 2
-            ethernets:
-              enp0s3:
-                routes:
-                  - to: default
-                    via: {{ (networks | selectattr('name', 'equalto', 'intnet_main') | first).final_gateway }}
-      when: "inventory_hostname in groups['web-frontend'] or inventory_hostname in groups['hotdesk']"
-
-    - name: "RED: Cambiar Default Gateway al Load Balancer (Nodos Internal)"
-      copy:
-        dest: /etc/netplan/99-gateway-override.yaml
-        content: |
-          network:
-            version: 2
-            ethernets:
-              enp0s3:
-                routes:
-                  - to: default
-                    via: {{ (networks | selectattr('name', 'equalto', 'intnet_internal') | first).final_gateway }}
-      when: "inventory_hostname in groups['cluster-node'] or inventory_hostname in groups['storage'] or inventory_hostname in groups['monitoring']"
-
-    - name: "RED: Aplicar nueva ruta por defecto"
-      command: netplan apply
+    - name: "RED: Cambio de Gateway por defecto hacia el Load Balancer"
       when: "inventory_hostname != 'load-balancer'"
+      block:
+        - name: "RED: Eliminar gateway antiguo de cloud-init"
+          ansible.builtin.replace:
+            path: /etc/netplan/50-cloud-init.yaml
+            regexp: '^\s*gateway4:.*$'
+            replace: ''
+
+        - name: "RED: Escribir override de netplan con el nuevo gateway del Load Balancer"
+          ansible.builtin.copy:
+            dest: /etc/netplan/99-gateway-override.yaml
+            content: |
+              network:
+                version: 2
+                ethernets:
+                  enp0s3:
+                    routes:
+                      - to: default
+                        via: {{ gateway_ip }}
+          vars:
+            gateway_ip: "{{ (networks | selectattr('name', 'equalto', (inventory_hostname in groups['web-frontend'] or inventory_hostname in groups['hotdesk']) | ternary('intnet_main', 'intnet_internal')) | first).final_gateway }}"
+
+        - name: "RED: Aplicar nueva configuracion de netplan"
+          ansible.builtin.command: netplan apply
+          changed_when: true
   tags: lockdown

@@ -172,6 +172,7 @@
   loop: "{{ groups['all'] }}"
   when: "item != 'load-balancer'"
 
+
 - name: "SISTEMA: Configurar /etc/hosts con la lista completa de nodos del inventario"
   ansible.builtin.blockinfile:
     path: /etc/hosts
@@ -183,3 +184,12 @@
       {% endfor %}
       192.168.1.254 jumpstart
     marker: "# {mark} ANSIBLE MANAGED HOSTS"
+
+- name: "SSH: Generar archivo ~/.ssh/config para el usuario admin en el Bastión"
+  template:
+    src: ssh_config.j2
+    dest: /home/admin/.ssh/config
+    owner: admin
+    group: admin
+    mode: '0600'
+

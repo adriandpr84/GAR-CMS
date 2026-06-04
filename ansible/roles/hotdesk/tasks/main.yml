@@ -19,3 +19,19 @@
       - traceroute
       - tmux
     state: present
+
+- name: "[Hotdesks] Copiar script de TrafficMix a la home del administrador"
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../trafficmix.py"
+    dest: "/home/admin/trafficmix.py"
+    owner: admin
+    group: admin
+    mode: '0755'
+
+- name: "[Hotdesks] Copiar script de TrafficMix a la home de alumno"
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../trafficmix.py"
+    dest: "/home/alumno/trafficmix.py"
+    owner: alumno
+    group: alumno
+    mode: '0755'

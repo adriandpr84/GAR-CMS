@@ -12,3 +12,7 @@ networks:
   - name: intnet_internal
     ip: "192.168.2.20"
     gateway: ""
+  - name: vboxnet0
+    type: hostonly
+    ip: "192.168.56.11"
+

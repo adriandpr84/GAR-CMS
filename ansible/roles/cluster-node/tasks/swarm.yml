@@ -65,6 +65,24 @@
   run_once: true
   loop: "{{ swarm_manager_hosts + swarm_worker_hosts }}"
 
+- name: "Swarm: obtener lista de nodos registrados en el clúster"
+  command: "docker node ls --format '{% raw %}{{.Hostname}}{% endraw %}'"
+  register: swarm_nodes_list
+  changed_when: false
+  delegate_to: "{{ swarm_manager_primary }}"
+  run_once: true
+
+- name: "Swarm: desasociar y eliminar del clúster los nodos que ya no están en el inventario"
+  shell: |
+    docker node update --availability drain {{ item }} || true
+    docker node rm {{ item }} || true
+  delegate_to: "{{ swarm_manager_primary }}"
+  run_once: true
+  loop: "{{ swarm_nodes_list.stdout_lines }}"
+  when: item not in groups['cluster-node']
+  register: swarm_cleanup_result
+  changed_when: "'drained' in swarm_cleanup_result.stdout or 'draining' in swarm_cleanup_result.stdout"
+
 - name: "Swarm: etiquetar nodos de base de datos"
   shell: >-
     docker node update
@@ -73,10 +91,7 @@
     {{ item }}
   delegate_to: "{{ swarm_manager_primary }}"
   run_once: true
-  loop:
-    - "{{ db_node_1 }}"
-    - "{{ db_node_2 }}"
-    - "{{ db_node_3 }}"
+  loop: "{{ db_cluster_nodes | map(attribute='host') | list }}"
   changed_when: false
 
 - name: "Swarm: etiquetar manager principal"

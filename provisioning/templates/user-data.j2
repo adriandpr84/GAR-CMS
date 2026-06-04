@@ -22,7 +22,7 @@ autoinstall:
 {% for net in node.networks %}
 {% set nic_name = ['enp0s3', 'enp0s8', 'enp0s9', 'enp0s10'][loop.index0] %}
       {{ nic_name }}:
-{% if net.type == 'nat' %}
+{% if net.type == 'nat' or not net.ip %}
         dhcp4: true
 {% else %}
 {% set global_net = networks | selectattr("name", "equalto", net.name) | first | default({}) %}
@@ -47,7 +47,7 @@ autoinstall:
 {% endfor %}
   storage:
     swap:
-      size: 512M
+      size: 2G
     layout:
       name: direct
   updates: security

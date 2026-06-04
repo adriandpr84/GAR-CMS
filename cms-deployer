@@ -58,10 +58,27 @@ def _tail_logs_until_idle():
         for line in iter(process.stdout.readline, ''):
             sys.stdout.write(line)
             sys.stdout.flush()
-            if "Orquestador vuelve a estado IDLE" in line or "estado restaurado a IDLE" in line:
+            if "finalizado con EXITO" in line:
                 print(f"\n    {GREEN}========================================================================{NC}")
                 print(f"    {GREEN}✓ Despliegue completado con éxito. Cerrando salida de logs...{NC}")
                 print(f"    {GREEN}========================================================================{NC}")
+                print(f"\n    {CYAN}ℹ️  INFORMACIÓN DE RED & SEGURIDAD:{NC}")
+                print(f"    - El relevo de red se ha completado. Las puertas de enlace ahora apuntan al Load Balancer.")
+                print(f"    - El nodo Jumpstart ya no es necesario para el funcionamiento de la infraestructura.")
+                print(f"    - Puedes apagar este Jumpstart de forma segura ejecutando: {YELLOW}sudo poweroff{NC}")
+                print(f"    {CYAN}========================================================================{NC}\n")
+                break
+            elif "finalizado con ERRORES" in line:
+                print(f"\n    {RED}========================================================================{NC}")
+                print(f"    {RED}✗ El despliegue de Ansible ha terminado con errores o fue abortado.{NC}")
+                print(f"    {RED}  Revisa los mensajes de arriba para identificar el problema.{NC}")
+                print(f"    {RED}  No apagues el Jumpstart, ya que puede ser necesario reprovisionar.{NC}")
+                print(f"    {RED}========================================================================{NC}\n")
+                break
+            elif "Orquestador vuelve a estado IDLE" in line or "estado restaurado a IDLE" in line:
+                print(f"\n    {YELLOW}========================================================================{NC}")
+                print(f"    {YELLOW}* El orquestador ha vuelto a estado IDLE (finalizado o reseteado).{NC}")
+                print(f"    {YELLOW}========================================================================{NC}\n")
                 break
         process.terminate()
     except KeyboardInterrupt:
@@ -80,7 +97,7 @@ def preflight_checks(host_api_url, settings, need_vbox=False, need_callback=Fals
             errors.append(
                 f"  {RED}✗{NC} vbox-api (Host)\n"
                 f"    No responde en: {vbox_url}\n"
-                f"    → Arranca el servicio en el Host: ./scripts/vbox-api-helper.sh start"
+                f"    → Arranca el servicio en el Host: ./provisioning/host/vbox-api-helper.sh start"
             )
         else:
             print(f"[{GREEN}✓{NC}] vbox-api (Host) — OK")
@@ -213,7 +230,8 @@ def main():
             print()
 
         print("[*] Generando configuraciones de red antes del despliegue...")
-        generate_pxe_configs(nodes, args.templates_dir)
+        deploy_extra_names = [n.get('name') for n in deploy_nodes if n.get('name') != 'jumpstart']
+        generate_pxe_configs(nodes, args.templates_dir, extra_names=deploy_extra_names)
 
         # Limpiar claves SSH antiguas del known_hosts para evitar conflictos
         # en el redeploy (las VMs nuevas generan claves SSH distintas)
@@ -260,15 +278,26 @@ def main():
         except Exception as e:
             print(f"[{RED}!{NC}] Error contactando con el Coordinador local en {url}: {e}")
             sys.exit(1)
-        
     elif args.action == 'undeploy':
         if not validate_nodes(nodes):
             sys.exit(1)
         preflight_checks(host_api_url, settings, need_vbox=True)
-            
+
         undeploy_nodes = _resolve_nodes(args, nodes)
+        undeploy_names = [n.get('name') for n in undeploy_nodes if n.get('name') != 'jumpstart']
+
+        print(f"\n[{YELLOW}!{NC}] Se van a ELIMINAR permanentemente las siguientes VMs de VirtualBox:")
+        for name in undeploy_names:
+            print(f"    {RED}✗{NC} {name}")
+        print(f"\n    {YELLOW}Esta operación es irreversible. Los discos virtuales serán borrados.{NC}")
+        confirm = input("\n    ¿Deseas continuar? (s/N): ").strip().lower()
+        if confirm not in ('s', 'si', 'sí', 'y', 'yes'):
+            print(f"[{YELLOW}-{NC}] Undeploy cancelado por el usuario.")
+            sys.exit(0)
+        print()
+
         undeploy_virtualbox_vms(undeploy_nodes, host_api_url)
-        
+
         # Resetear el estado del coordinador para que no quede pillado
         callback_port = settings.get('jumpstart', {}).get('callback_port', 8081)
         coordinator_url = f"http://localhost:{callback_port}/reset"
@@ -281,6 +310,7 @@ def main():
             print(f"[{YELLOW}!{NC}] Aviso: No se pudo contactar con el coordinador para resetear su estado.")
             print(f"    Si el coordinador está activo, puedes resetearlo manualmente:")
             print(f"    curl -X POST {coordinator_url}")
+
         
     elif args.action == 'generate-configs':
         if not validate_nodes(nodes):
@@ -299,7 +329,8 @@ def main():
 
     elif args.action == 'provision':
         print("[*] Asegurando que el inventario de Ansible esté actualizado...")
-        generate_pxe_configs(nodes, args.templates_dir)
+        provision_extra_names = [n.get('name') for n in target_nodes if n.get('name') != 'jumpstart']
+        generate_pxe_configs(nodes, args.templates_dir, extra_names=provision_extra_names)
         
         target_nodes = _resolve_nodes(args, nodes)
         if not args.node and not args.file:

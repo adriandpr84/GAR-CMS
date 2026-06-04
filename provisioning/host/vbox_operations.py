@@ -23,7 +23,8 @@ from provisioning.host.vbox_helpers import (
     add_sata_controller,
     create_medium,
     attach_disk,
-    sanitize_vm_name
+    sanitize_vm_name,
+    get_default_machine_folder
 )
 
 log = logging.getLogger("vbox-api")
@@ -133,12 +134,15 @@ def stop_vms(vms, mode="acpipowerbutton"):
 
 # ── Creación masiva ───────────────────────────────────────────────────────────
 
-def create_vms(vms):
+def create_vms(vms, vm_dir=None):
     """
     Crea, configura y arranca varias VMs en paralelo.
     Si una VM ya existe, la elimina antes de recrearla.
     """
-    vm_dir = os.path.expanduser("~/VirtualBox VMs")
+    if vm_dir is None:
+        vm_dir = get_default_machine_folder() or os.path.expanduser("~/VirtualBox VMs")
+    else:
+        vm_dir = os.path.expanduser(vm_dir)
     existing_vms = get_existing_vms()
 
     def _create_one(vm):

@@ -108,6 +108,8 @@ def modify_vm(name, cpus=None, ram_mb=None, boot=None, vram=None, graphicscontro
             args.extend([f"--nic{idx}", net_type])
             if net_type == "intnet":
                 args.extend([f"--intnet{idx}", net.get("name", "")])
+            elif net_type == "hostonly":
+                args.extend([f"--hostonlyadapter{idx}", net.get("name", "vboxnet0")])
             if net.get("mac"):
                 mac_clean = net["mac"].replace(":", "").replace("-", "").upper()
                 args.extend([f"--macaddress{idx}", mac_clean])
@@ -130,3 +132,16 @@ def attach_disk(name, disk_path):
     return _vbox("storageattach", sanitize_vm_name(name),
                  "--storagectl", "SATA Controller",
                  "--port", "0", "--device", "0", "--type", "hdd", "--medium", disk_path)
+
+
+def get_default_machine_folder():
+    """Obtiene la ruta por defecto donde VirtualBox crea las VMs."""
+    ok, out = _vbox("list", "systemproperties")
+    if ok:
+        for line in out.splitlines():
+            if line.startswith("Default machine folder:"):
+                parts = line.split(":", 1)
+                if len(parts) > 1:
+                    return parts[1].strip()
+    return None
+

@@ -29,6 +29,7 @@ def run_ansible_site(become_password=None):
     """Ejecuta el playbook principal (site.yml)."""
     script_dir = os.path.dirname(os.path.abspath(__file__))
     repo_root = os.path.dirname(os.path.dirname(script_dir))
+
     inventory_path = os.path.join(repo_root, 'ansible', 'inventory', 'hosts.yml')
     playbook_path = os.path.join(repo_root, 'ansible', 'playbooks', 'site.yml')
     
@@ -42,14 +43,12 @@ def run_ansible_site(become_password=None):
     env['PY_COLORS'] = '1'
     env['ANSIBLE_HOST_KEY_CHECKING'] = 'false'
     
-    if become_password:
-        # Inyectamos la contraseña como variable de entorno: no requiere TTY interactivo
-        env['ANSIBLE_BECOME_PASSWORD'] = become_password
-    
     cmd = [
         'ansible-playbook', '-i', inventory_path, playbook_path,
         '--ssh-extra-args', '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
     ]
+    if become_password:
+        cmd.extend(['-e', f'ansible_become_password={become_password}'])
     
     result = subprocess.run(
         cmd,
@@ -69,7 +68,7 @@ def provision_all_nodes(nodes_list, become_password=None):
     Comprueba SSH en todos los nodos y lanza la ejecución.
     """
     print(f"[{CYAN}*{NC}] Fase final (Ansible): Verificando {len(nodes_list)} nodos antes del despliegue...", flush=True)
-    
+
     all_ready = True
     for node in nodes_list:
         name = node.get('name')
@@ -82,9 +81,10 @@ def provision_all_nodes(nodes_list, become_password=None):
 
         if not wait_for_ssh(node_ip, name):
             all_ready = False
-            
+
     if all_ready:
-        run_ansible_site(become_password=become_password)
+        return run_ansible_site(become_password=become_password)
     else:
         print(f"[{RED}!{NC}] Abortando ejecución de Ansible porque algunos nodos no están listos.", flush=True)
+        return False
 

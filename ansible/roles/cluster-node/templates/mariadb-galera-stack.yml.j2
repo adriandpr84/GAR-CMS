@@ -1,32 +1,33 @@
 version: "3.8"
 
 services:
-  db1:
+{% for node in db_cluster_nodes %}
+  {{ node.name }}:
     image: {{ db_image }}
     networks:
       {{ db_overlay_network }}:
         aliases:
-          - db1
+          - {{ node.name }}
     environment:
       MYSQL_ROOT_PASSWORD: "{{ db_root_password }}"
       MYSQL_DATABASE: "{{ db_name }}"
       MYSQL_USER: "{{ db_user }}"
       MYSQL_PASSWORD: "{{ db_password }}"
       GALERA_CLUSTER_NAME: "{{ db_galera_cluster_name }}"
-      GALERA_CLUSTER_ADDRESS: "gcomm://db1,db2,db3"
-      GALERA_BOOTSTRAP: "yes"
-      GALERA_NODE_NAME: "db1"
-      GALERA_NODE_ADDRESS: "db1"
+      GALERA_CLUSTER_ADDRESS: "gcomm://{{ db_cluster_nodes | map(attribute='name') | join(',') }}"
+      GALERA_BOOTSTRAP: "{{ (loop.first) | ternary('yes', 'no') }}"
+      GALERA_NODE_NAME: "{{ node.name }}"
+      GALERA_NODE_ADDRESS: "{{ node.name }}"
       GALERA_MARIABACKUP_USER: "{{ db_mariabackup_user }}"
       GALERA_MARIABACKUP_PASSWORD: "{{ db_mariabackup_password }}"
     volumes:
-      - db1_data:/var/lib/mysql
+      - {{ node.name }}_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost"]
+      test: ["CMD", "pidof", "mariadbd"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
+      start_period: 180s
     deploy:
       replicas: 1
       restart_policy:
@@ -34,84 +35,16 @@ services:
         delay: 10s
       placement:
         constraints:
-          - node.hostname == {{ db_node_1 }}
+          - node.hostname == {{ node.host }}
 
-  db2:
-    image: {{ db_image }}
-    networks:
-      {{ db_overlay_network }}:
-        aliases:
-          - db2
-    environment:
-      MYSQL_ROOT_PASSWORD: "{{ db_root_password }}"
-      MYSQL_DATABASE: "{{ db_name }}"
-      MYSQL_USER: "{{ db_user }}"
-      MYSQL_PASSWORD: "{{ db_password }}"
-      GALERA_CLUSTER_NAME: "{{ db_galera_cluster_name }}"
-      GALERA_CLUSTER_ADDRESS: "gcomm://db1,db2,db3"
-      GALERA_BOOTSTRAP: "no"
-      GALERA_NODE_NAME: "db2"
-      GALERA_NODE_ADDRESS: "db2"
-      GALERA_MARIABACKUP_USER: "{{ db_mariabackup_user }}"
-      GALERA_MARIABACKUP_PASSWORD: "{{ db_mariabackup_password }}"
-    volumes:
-      - db2_data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 60s
-    deploy:
-      replicas: 1
-      restart_policy:
-        condition: any
-        delay: 10s
-      placement:
-        constraints:
-          - node.hostname == {{ db_node_2 }}
-
-  db3:
-    image: {{ db_image }}
-    networks:
-      {{ db_overlay_network }}:
-        aliases:
-          - db3
-    environment:
-      MYSQL_ROOT_PASSWORD: "{{ db_root_password }}"
-      MYSQL_DATABASE: "{{ db_name }}"
-      MYSQL_USER: "{{ db_user }}"
-      MYSQL_PASSWORD: "{{ db_password }}"
-      GALERA_CLUSTER_NAME: "{{ db_galera_cluster_name }}"
-      GALERA_CLUSTER_ADDRESS: "gcomm://db1,db2,db3"
-      GALERA_BOOTSTRAP: "no"
-      GALERA_NODE_NAME: "db3"
-      GALERA_NODE_ADDRESS: "db3"
-      GALERA_MARIABACKUP_USER: "{{ db_mariabackup_user }}"
-      GALERA_MARIABACKUP_PASSWORD: "{{ db_mariabackup_password }}"
-    volumes:
-      - db3_data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 60s
-    deploy:
-      replicas: 1
-      restart_policy:
-        condition: any
-        delay: 10s
-      placement:
-        constraints:
-          - node.hostname == {{ db_node_3 }}
+{% endfor %}
 
   db-lb:
     image: {{ haproxy_image }}
     networks:
       - {{ db_overlay_network }}
     configs:
-      - source: db_haproxy_cfg
+      - source: db_haproxy_cfg_v3
         target: /usr/local/etc/haproxy/haproxy.cfg
     ports:
       - target: 3306
@@ -132,10 +65,10 @@ networks:
     attachable: true
 
 volumes:
-  db1_data:
-  db2_data:
-  db3_data:
+{% for node in db_cluster_nodes %}
+  {{ node.name }}_data:
+{% endfor %}
 
 configs:
-  db_haproxy_cfg:
+  db_haproxy_cfg_v3:
     file: {{ swarm_remote_dir }}/haproxy.cfg

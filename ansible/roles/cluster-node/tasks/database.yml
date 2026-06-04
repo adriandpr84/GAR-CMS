@@ -75,7 +75,7 @@
     host: "{{ hostvars[db_node_1].ansible_host }}"
     port: 3306
     state: started
-    timeout: 120
+    timeout: 300
   delegate_to: "{{ swarm_manager_primary }}"
   run_once: true
 
@@ -84,7 +84,7 @@
   register: db_services_count
   retries: "{{ swarm_wait_retries }}"
   delay: "{{ swarm_wait_delay }}"
-  until: db_services_count.stdout | int >= 4
+  until: db_services_count.stdout | int >= {{ db_cluster_nodes | length + 1 }}
   changed_when: false
   delegate_to: "{{ swarm_manager_primary }}"
   run_once: true

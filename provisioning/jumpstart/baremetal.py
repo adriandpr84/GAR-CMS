@@ -29,6 +29,14 @@ def get_existing_vms(host_api_url):
         return result.get("vms", [])
     return []
 
+def get_running_vms(host_api_url):
+    """Obtiene la lista de VMs activas (running) en VirtualBox a través de la API."""
+    result = _make_get_request(host_api_url, "/vbox/running-vms")
+    if result and result.get("status") == "ok":
+        return result.get("vms", [])
+    return []
+
+
 def _make_api_request(api_url, path, payload_dict, timeout=20):
     """Realiza una petición POST genérica a la API de VirtualBox."""
     if not api_url:

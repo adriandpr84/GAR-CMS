@@ -10,3 +10,7 @@
   service:
     name: php8.1-fpm
     state: restarted
+
+- name: Reload systemd
+  systemd:
+    daemon_reload: yes

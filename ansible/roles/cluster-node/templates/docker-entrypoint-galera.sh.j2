@@ -11,10 +11,14 @@ MYSQL_DATABASE="${MYSQL_DATABASE:-cmsdb}"
 MYSQL_USER="${MYSQL_USER:-cmsuser}"
 MYSQL_PASSWORD="${MYSQL_PASSWORD:-cmspass}"
 GALERA_CLUSTER_NAME="${GALERA_CLUSTER_NAME:-gar_galera_cluster}"
-GALERA_CLUSTER_ADDRESS="${GALERA_CLUSTER_ADDRESS:-gcomm://db1,db2,db3}"
+GALERA_CLUSTER_ADDRESS="${GALERA_CLUSTER_ADDRESS:-gcomm://{{ db_cluster_nodes | map(attribute='name') | join(',') }}}"
 GALERA_BOOTSTRAP="${GALERA_BOOTSTRAP:-no}"
 GALERA_NODE_NAME="${GALERA_NODE_NAME:-${HOSTNAME}}"
-GALERA_NODE_ADDRESS="${GALERA_NODE_ADDRESS:-${HOSTNAME}}"
+GALERA_NODE_ADDRESS="${GALERA_NODE_ADDRESS:-}"
+if [[ ! "$GALERA_NODE_ADDRESS" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "GALERA_NODE_ADDRESS no es una IP válida ('${GALERA_NODE_ADDRESS}'). Autodetectando IP del contenedor..."
+  GALERA_NODE_ADDRESS=$(hostname -i | awk '{print $1}')
+fi
 GALERA_MARIABACKUP_USER="${GALERA_MARIABACKUP_USER:-mariabackup}"
 GALERA_MARIABACKUP_PASSWORD="${GALERA_MARIABACKUP_PASSWORD:-backuppass}"
 
@@ -27,6 +31,10 @@ bind-address=0.0.0.0
 binlog_format=ROW
 default_storage_engine=InnoDB
 innodb_autoinc_lock_mode=2
+innodb_use_native_aio=OFF
+innodb_flush_log_at_trx_commit=0
+aria_group_commit=soft
+aria_group_commit_interval=100000
 
 wsrep_on=ON
 wsrep_provider=/usr/lib/galera/libgalera_smm.so
@@ -37,13 +45,20 @@ wsrep_node_address=${GALERA_NODE_ADDRESS}
 wsrep_sst_method=mariabackup
 wsrep_sst_auth=${GALERA_MARIABACKUP_USER}:${GALERA_MARIABACKUP_PASSWORD}
 
-[client]
+[mysql]
 user=root
 password=${MYSQL_ROOT_PASSWORD}
+
+[mysqld_safe]
+syslog-tag=mariadb
+
+[sst]
+sst-syslog=-1
 CFG
 
-if [ ! -d "$DATADIR/mysql" ]; then
-  echo "Inicializando datadir de MariaDB en $DATADIR"
+if [ "${GALERA_BOOTSTRAP:-no}" = "yes" ] && [ ! -f "$DATADIR/.mariadb_initialized" ]; then
+  echo "Inicializando datadir de MariaDB en $DATADIR (limpiando cualquier residuo previo)"
+  find "$DATADIR" -mindepth 1 -maxdepth 1 ! -name ".galera_bootstrapped" -exec rm -rf {} +
   mariadb-install-db --user=mysql --datadir="$DATADIR" --auth-root-authentication-method=normal >/dev/null
 
   echo "Arrancando MariaDB temporal para crear usuarios y base de datos"
@@ -56,13 +71,13 @@ if [ ! -d "$DATADIR/mysql" ]; then
     --wsrep_on=OFF &
 
   for i in $(seq 1 60); do
-    if mariadb-admin --socket="$SOCKET" --user=root ping >/dev/null 2>&1; then
+    if mariadb-admin --no-defaults --socket="$SOCKET" --user=root ping >/dev/null 2>&1; then
       break
     fi
     sleep 1
   done
 
-  mariadb --socket="$SOCKET" --user=root <<SQL
+  mariadb --no-defaults --socket="$SOCKET" --user=root <<SQL
 ALTER USER 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PASSWORD}';
 CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED BY '${MYSQL_ROOT_PASSWORD}';
 GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION;
@@ -71,10 +86,21 @@ CREATE USER IF NOT EXISTS '${MYSQL_USER}'@'%' IDENTIFIED BY '${MYSQL_PASSWORD}';
 GRANT ALL PRIVILEGES ON \`${MYSQL_DATABASE}\`.* TO '${MYSQL_USER}'@'%';
 CREATE USER IF NOT EXISTS '${GALERA_MARIABACKUP_USER}'@'%' IDENTIFIED BY '${GALERA_MARIABACKUP_PASSWORD}';
 GRANT ALL PRIVILEGES ON *.* TO '${GALERA_MARIABACKUP_USER}'@'%';
+CREATE USER IF NOT EXISTS '${GALERA_MARIABACKUP_USER}'@'localhost' IDENTIFIED BY '${GALERA_MARIABACKUP_PASSWORD}';
+GRANT ALL PRIVILEGES ON *.* TO '${GALERA_MARIABACKUP_USER}'@'localhost';
 FLUSH PRIVILEGES;
 SQL
 
-  mariadb-admin --socket="$SOCKET" --user=root --password="${MYSQL_ROOT_PASSWORD}" shutdown
+  mariadb-admin --no-defaults --socket="$SOCKET" --user=root --password="${MYSQL_ROOT_PASSWORD}" shutdown
+  
+  touch "$DATADIR/.mariadb_initialized"
+  chown mysql:mysql "$DATADIR/.mariadb_initialized"
+fi
+
+# Limpiar archivos de bloqueo residuales de SST/Galera que puedan haber quedado de un apagado abrupto
+if [ -f "$DATADIR/sst_in_progress" ]; then
+  echo "Detectado archivo sst_in_progress residual. Limpiando para evitar bloqueo de SST..."
+  rm -f "$DATADIR/sst_in_progress"
 fi
 
 EXTRA_ARGS=()
@@ -86,8 +112,8 @@ if [ "$GALERA_BOOTSTRAP" = "yes" ]; then
     echo "El clúster ya fue inicializado anteriormente. Comprobando estado de otros nodos..."
     set +e
     node_active=0
-    # Comprobamos si db2 o db3 responden en el puerto Galera (4567)
-    for node in db2 db3; do
+    # Comprobamos si los demás nodos responden en el puerto Galera (4567)
+    for node in {% for n in db_cluster_nodes[1:] %}{{ n.name }}{% if not loop.last %} {% endif %}{% endfor %}; do
       if getent hosts "$node" >/dev/null 2>&1; then
         if timeout 3 bash -c "cat < /dev/null > /dev/tcp/$node/4567" >/dev/null 2>&1; then
           echo "Nodo $node está activo."
@@ -99,6 +125,10 @@ if [ "$GALERA_BOOTSTRAP" = "yes" ]; then
     set -e
     if [ "$node_active" -eq 0 ]; then
       echo "Ningún otro nodo responde en el puerto 4567. Re-inicializando clúster (Bootstrap) para evitar bloqueo de apagado frío..."
+      if [ -f "$DATADIR/grastate.dat" ]; then
+        echo "Forzando safe_to_bootstrap=1 en grastate.dat para permitir el bootstrap del clúster..."
+        sed -i 's/safe_to_bootstrap: 0/safe_to_bootstrap: 1/' "$DATADIR/grastate.dat"
+      fi
       EXTRA_ARGS+=("--wsrep-new-cluster")
     else
       echo "Uniéndose al clúster activo existente."
@@ -110,21 +140,21 @@ if [ "$GALERA_BOOTSTRAP" = "yes" ]; then
     EXTRA_ARGS+=("--wsrep-new-cluster")
   fi
 elif [ "$GALERA_BOOTSTRAP" = "no" ]; then
-  echo "Esperando a que el nodo primario (db1) esté disponible en el puerto Galera (4567)..."
+  echo "Esperando a que el nodo primario ({{ db_cluster_nodes[0].name }}) esté disponible en el puerto Galera (4567)..."
   max_wait=120
   elapsed=0
   set +e
-  until timeout 3 bash -c "cat < /dev/null > /dev/tcp/db1/4567" > /dev/null 2>&1; do
+  until timeout 3 bash -c "cat < /dev/null > /dev/tcp/{{ db_cluster_nodes[0].name }}/4567" > /dev/null 2>&1; do
     if [ "$elapsed" -ge "$max_wait" ]; then
-      echo "WARN: db1 no respondió en ${max_wait}s. Intentando unirse de todas formas..."
+      echo "WARN: {{ db_cluster_nodes[0].name }} no respondió en ${max_wait}s. Intentando unirse de todas formas..."
       break
     fi
-    echo "  db1 no disponible aún (${elapsed}s / ${max_wait}s). Reintentando en 5s..."
+    echo "  {{ db_cluster_nodes[0].name }} no disponible aún (${elapsed}s / ${max_wait}s). Reintentando en 5s..."
     sleep 5
     elapsed=$((elapsed + 5))
   done
   set -e
-  echo "db1 disponible (o timeout alcanzado). Arrancando nodo secundario."
+  echo "{{ db_cluster_nodes[0].name }} disponible (o timeout alcanzado). Arrancando nodo secundario."
 fi
 
 echo "Arrancando MariaDB Galera: nodo=${GALERA_NODE_NAME}, cluster=${GALERA_CLUSTER_NAME}, address=${GALERA_CLUSTER_ADDRESS}"

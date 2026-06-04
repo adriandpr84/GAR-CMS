@@ -1,9 +1,11 @@
 ---
 # ==============================================================
-# 1. BLOQUE UNIVERSAL: AGENTE SNMP (Para los 17 nodos)
+# 1. GESTIÓN DE AGENTES Y ELIMINACIÓN DE SNMP (Para todos los nodos)
 # ==============================================================
 
-# Las dependencias de agente (snmpd) ahora se instalan en el rol 'common' para todos los nodos.
+# Las dependencias de agente SNMP han sido eliminadas. Ahora se desinstala SNMP y se usa
+# el agente nativo de CheckMK (puerto 6556 tcp) en todos los nodos.
+# La instalación del agente se realiza en un play dedicado dentro de site.yml para todos los nodos.
 
 
 
@@ -67,6 +69,7 @@
   ansible.builtin.uri:
     url: "http://localhost/monitoring/check_mk/api/1.0/domain-types/host_config/collections/all"
     method: POST
+    timeout: 120
     headers:
       Authorization: "Bearer cmkadmin admin-gar-2026"
       Accept: "application/json"
@@ -77,18 +80,46 @@
       host_name: "{{ item }}"
       attributes:
         ipaddress: "{{ hostvars[item]['ansible_host'] }}"
-        tag_agent: "no-agent"
-        tag_snmp_ds: "snmp-v2"
-        snmp_community:
-          type: "v1_v2_community"
-          community: "comunidad-gar"
+        tag_agent: "cmk-agent"
+        tag_snmp_ds: "no-snmp"
     status_code: [200, 201, 400, 409]
   loop: "{{ groups['all'] }}"
   when: "inventory_hostname == 'monitoring' and item != 'monitoring' and item != 'jumpstart'"
 
-- name: "[CheckMK] Lanzar descubrimiento de servicios para los nodos registrados"
+- name: "[CheckMK] Actualizar atributos de hosts ya existentes (cmk-agent + no-snmp)"
   ansible.builtin.uri:
-    url: "http://localhost/monitoring/check_mk/api/1.0/objects/host_config/{{ item }}/actions/discover_services/invoke"
+    url: "http://localhost/monitoring/check_mk/api/1.0/objects/host_config/{{ item }}"
+    method: PUT
+    timeout: 120
+    headers:
+      Authorization: "Bearer cmkadmin admin-gar-2026"
+      Accept: "application/json"
+      Content-Type: "application/json"
+      If-Match: "*"
+    body_format: json
+    body:
+      attributes:
+        ipaddress: "{{ hostvars[item]['ansible_host'] }}"
+        tag_agent: "cmk-agent"
+        tag_snmp_ds: "no-snmp"
+    status_code: [200, 204]
+  loop: "{{ groups['all'] }}"
+  when: "inventory_hostname == 'monitoring' and item != 'monitoring' and item != 'jumpstart'"
+  ignore_errors: yes
+
+- name: "[CheckMK] Obtener reglas de descubrimiento de procesos existentes"
+  ansible.builtin.uri:
+    url: "http://localhost/monitoring/check_mk/api/1.0/domain-types/rule/collections/all?ruleset_name=inventory_processes_rules"
+    method: GET
+    headers:
+      Authorization: "Bearer cmkadmin admin-gar-2026"
+      Accept: "application/json"
+  register: existing_rules
+  when: "inventory_hostname == 'monitoring'"
+
+- name: "[CheckMK] Crear reglas de descubrimiento de procesos si no existen"
+  ansible.builtin.uri:
+    url: "http://localhost/monitoring/check_mk/api/1.0/domain-types/rule/collections/all"
     method: POST
     headers:
       Authorization: "Bearer cmkadmin admin-gar-2026"
@@ -96,10 +127,74 @@
       Content-Type: "application/json"
     body_format: json
     body:
-      mode: "new"
+      ruleset: "inventory_processes_rules"
+      folder: "/"
+      properties:
+        description: "Discover {{ item }} process"
+      value_raw: " {'match': '~.*{{ item }}.*', 'descr': 'Process {{ item }}', 'user': False, 'default_params': {'levels': (1, 1, 99, 99), 'cpu_rescale_max': False}}"
+      conditions:
+        host_tags: []
+        host_label_groups: []
+        service_label_groups: []
+    status_code: [200, 201]
+  loop:
+    - nginx
+    - dockerd
+    - glusterd
+    - mysqld
+    - php-fpm
+  when: >
+    inventory_hostname == 'monitoring' and
+    (existing_rules.json.value | default([]) | selectattr('extensions.properties.description', 'defined') | selectattr('extensions.properties.description', 'equalto', 'Discover ' ~ item ~ ' process') | list | length == 0)
+
+
+
+- name: "[CheckMK] Obtener ETag de cambios pendientes (pre-descubrimiento)"
+  ansible.builtin.uri:
+    url: "http://localhost/monitoring/check_mk/api/1.0/domain-types/activation_run/collections/pending_changes"
+    method: GET
+    headers:
+      Authorization: "Bearer cmkadmin admin-gar-2026"
+      Accept: "application/json"
+  register: pending_changes_pre
+  when: "inventory_hostname == 'monitoring'"
+
+- name: "[CheckMK] Activar cambios de las nuevas reglas de procesos"
+  ansible.builtin.uri:
+    url: "http://localhost/monitoring/check_mk/api/1.0/domain-types/activation_run/actions/activate-changes/invoke"
+    method: POST
+    timeout: 120
+    headers:
+      Authorization: "Bearer cmkadmin admin-gar-2026"
+      Accept: "application/json"
+      Content-Type: "application/json"
+      If-Match: "{{ pending_changes_pre.etag | default('') }}"
+    body_format: json
+    body:
+      redirect: false
+      sites: []
+      force_foreign_changes: true
+    status_code: [200, 201, 204]
+  when: "inventory_hostname == 'monitoring' and pending_changes_pre is succeeded and pending_changes_pre.json.value | length > 0"
+
+
+- name: "[CheckMK] Lanzar descubrimiento de servicios para los nodos registrados"
+  ansible.builtin.uri:
+    url: "http://localhost/monitoring/check_mk/api/1.0/domain-types/service_discovery_run/actions/start/invoke"
+    method: POST
+    timeout: 120
+    headers:
+      Authorization: "Bearer cmkadmin admin-gar-2026"
+      Accept: "application/json"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      host_name: "{{ item }}"
+      mode: "tabula_rasa"
     status_code: [200, 201, 204]
   loop: "{{ groups['all'] }}"
   when: "inventory_hostname == 'monitoring' and item != 'monitoring' and item != 'jumpstart'"
+  ignore_errors: yes
 
 - name: "[CheckMK] Obtener ETag de cambios pendientes"
   ansible.builtin.uri:
@@ -115,6 +210,7 @@
   ansible.builtin.uri:
     url: "http://localhost/monitoring/check_mk/api/1.0/domain-types/activation_run/actions/activate-changes/invoke"
     method: POST
+    timeout: 120
     headers:
       Authorization: "Bearer cmkadmin admin-gar-2026"
       Accept: "application/json"
@@ -127,3 +223,14 @@
       force_foreign_changes: true
     status_code: [200, 201, 204]
   when: "inventory_hostname == 'monitoring' and pending_changes_res is succeeded"
+
+- name: "[CheckMK] Obtener la version exacta de CheckMK instalada"
+  ansible.builtin.shell: "docker exec checkmk-server omd version | awk '{print $NF}' | sed 's/\\.cre//'"
+  register: omd_version_cmd
+  changed_when: false
+  when: "inventory_hostname == 'monitoring'"
+
+- name: "[CheckMK] Establecer fact con la version de CheckMK"
+  ansible.builtin.set_fact:
+    checkmk_version: "{{ omd_version_cmd.stdout | trim }}"
+  when: "inventory_hostname == 'monitoring'"

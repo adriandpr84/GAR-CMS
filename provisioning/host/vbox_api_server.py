@@ -37,7 +37,7 @@ from provisioning.host.vbox_operations import (
 )
 
 # ── Configuración ──────────────────────────────────────────────────────────────
-_base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _settings  = load_settings_file(os.path.join(_base_dir, "config", "settings.yml"))
 
 DEFAULT_PORT = _settings.get("host_api", {}).get("port", 7070)
@@ -205,7 +205,8 @@ class VBoxAPIHandler(http.server.BaseHTTPRequestHandler):
             vms = body.get("vms", [])
             if not isinstance(vms, list):
                 self._error(400, '"vms" debe ser una lista'); return
-            log_msgs, errors = create_vms(vms)
+            vm_dir = _settings.get("host_api", {}).get("vm_dir")
+            log_msgs, errors = create_vms(vms, vm_dir=vm_dir)
             if errors:
                 self._error(500, "Errores creando VMs: " + " | ".join(errors))
             else:

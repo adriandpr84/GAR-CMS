@@ -4,3 +4,6 @@ mac: "08:00:27:00:02:0E"
 networks:
   - name: intnet_internal
     ip: "192.168.2.14"
+production_specs:
+  ram_mb: 768
+  cpus: 1

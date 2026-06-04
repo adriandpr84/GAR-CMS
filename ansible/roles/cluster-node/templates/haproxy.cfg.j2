@@ -6,10 +6,20 @@ defaults
     log global
     mode tcp
     option tcplog
-    option tcp-check
     timeout connect 10s
     timeout client 1m
     timeout server 1m
+
+resolvers docker_dns
+    nameserver dns1 127.0.0.11:53
+    resolve_retries 3
+    timeout resolve 1s
+    timeout retry   1s
+    hold other      10s
+    hold refused    10s
+    hold nx         10s
+    hold timeout    10s
+    hold valid      10s
 
 frontend mysql_front
     bind *:3306
@@ -17,7 +27,8 @@ frontend mysql_front
 
 backend galera_back
     balance roundrobin
-    default-server init-addr none
-    server db1 db1:3306 check inter 5s fall 3 rise 2
-    server db2 db2:3306 check inter 5s fall 3 rise 2 backup
-    server db3 db3:3306 check inter 5s fall 3 rise 2 backup
+    default-server init-addr none resolvers docker_dns
+{% for node in db_cluster_nodes %}
+    server {{ node.name }} {{ node.name }}:3306 check inter 5s fall 3 rise 2{{ (not loop.first) | ternary(' backup', '') }}
+{% endfor %}
+

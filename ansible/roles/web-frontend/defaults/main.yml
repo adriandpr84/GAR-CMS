@@ -1,0 +1,7 @@
+---
+# ansible/roles/web-frontend/defaults/main.yml
+# Credenciales del clúster de base de datos para WordPress
+
+db_name: cmsdb
+db_user: cmsuser
+db_password: CmsPass2026!

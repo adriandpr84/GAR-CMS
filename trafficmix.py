@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # ==============================================================================
 # TrafficMix Generator para GAR (Version Python multihilo con urllib)
-# Requisito 15: Generar tráfico desde fuera de la red y desde hot-desks
+# Generar tráfico desde fuera de la red y desde hot-desks
 # ==============================================================================
 
 import sys
@@ -15,9 +15,13 @@ from concurrent.futures import ThreadPoolExecutor
 ENDPOINTS = [
     "/",
     "/wp-login.php",
-    "/?s=test",
+    "/?s=test_{}",
     "/?p=1",
-    "/wp-cron.php"
+    "/wp-cron.php",
+    "/feed/",
+    "/?author=1",
+    "/?cat=1",
+    "/wp-links-opml.php"
 ]
 
 def simular_usuario(url, end_time, thread_id):
@@ -25,15 +29,19 @@ def simular_usuario(url, end_time, thread_id):
     requests_sent = 0
     while time.time() < end_time:
         endpoint = random.choice(ENDPOINTS)
+        if "{}" in endpoint:
+            endpoint = endpoint.format(random.randint(1, 100000))
         target = f"{url}{endpoint}"
         
         try:
+            import ssl
+            context = ssl._create_unverified_context()
             # Crear un Request con un User-Agent para simular un navegador
             req = urllib.request.Request(
                 target, 
                 headers={'User-Agent': f'Mozilla/5.0 TrafficMix/1.0 (User-{thread_id})'}
             )
-            with urllib.request.urlopen(req, timeout=5) as response:
+            with urllib.request.urlopen(req, timeout=5, context=context) as response:
                 status = response.status
                 print(f"[{time.strftime('%H:%M:%S')}][Hilo-{thread_id}] Petición a {target} -> OK ({status})")
         except urllib.error.HTTPError as e:

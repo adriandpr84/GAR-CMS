@@ -23,6 +23,28 @@
     state: restarted
     enabled: yes
 
+- name: "Crear directorio de override para systemd de PHP-FPM"
+  file:
+    path: /etc/systemd/system/php8.1-fpm.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: "Añadir dependencia de systemd para que PHP-FPM espere a GlusterFS"
+  copy:
+    dest: /etc/systemd/system/php8.1-fpm.service.d/override.conf
+    content: |
+      [Unit]
+      Requires=remote-fs.target
+      After=remote-fs.target
+    owner: root
+    group: root
+    mode: '0644'
+  notify:
+    - Reload systemd
+    - Reiniciar PHP-FPM
+
 - name: "UFW: Abrir puerto HTTP (80) para Nginx"
   community.general.ufw:
     rule: allow

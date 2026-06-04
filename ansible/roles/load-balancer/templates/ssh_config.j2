@@ -1,0 +1,23 @@
+# ==============================================================================
+# SSH Config para el usuario admin en el Load Balancer (Bastión)
+# Generado automáticamente por Ansible
+# ==============================================================================
+
+# Configuración por defecto para todos los hosts
+Host *
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    IdentityFile ~/.ssh/id_rsa
+    User admin
+
+# Nodos del inventario
+{% for host in groups['all'] %}
+{% if hostvars[host]['ansible_host'] is defined and host != 'load-balancer' %}
+Host {{ host }}
+    HostName {{ hostvars[host]['ansible_host'] }}
+{% endif %}
+{% endfor %}
+
+# Nodo Jumpstart
+Host jumpstart
+    HostName 192.168.1.254

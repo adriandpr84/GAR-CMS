@@ -5,3 +5,9 @@ mac: "08:00:27:00:02:0D"
 networks:
   - name: intnet_internal
     ip: "192.168.2.13"
+production_specs:
+  ram_mb: 768
+  cpus: 1
+
+vars:
+  is_db: false

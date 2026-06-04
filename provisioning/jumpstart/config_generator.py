@@ -10,10 +10,42 @@ RED = '\033[91m'
 NC = '\033[0m'
 import yaml
 
-def _generate_ansible_inventory(nodes, repo_root):
-    """Genera dinámicamente el archivo hosts.yml de Ansible basado en los nodos YAML."""
+def _generate_ansible_inventory(nodes, repo_root, extra_names=None):
+    """
+    Genera dinámicamente el archivo hosts.yml de Ansible.
+
+    Un nodo se incluye en el inventario si:
+      - su nombre está en `extra_names` (nodos pasados explícitamente al deploy/provision), O
+      - está encendido (running) en VirtualBox.
+    Si no se puede contactar con vbox-api y no hay extra_names, se incluyen todos.
+    """
     print(f"[{CYAN}*{NC}] Generando inventario dinámico de Ansible...")
-    
+
+    extra_names = set(extra_names or [])
+    running_vms = set()
+
+    try:
+        from provisioning.jumpstart.baremetal import get_running_vms
+        settings_path = os.path.join(repo_root, "config", "settings.yml")
+        with open(settings_path, 'r') as sf:
+            settings = yaml.safe_load(sf) or {}
+        host_api_ip = settings.get('host_api', {}).get('ip', '192.168.56.1')
+        host_api_port = settings.get('host_api', {}).get('port', 7070)
+        host_api_url = f"http://{host_api_ip}:{host_api_port}"
+        running_vms = set(get_running_vms(host_api_url))
+        if running_vms:
+            print(f"[{CYAN}*{NC}] VMs encendidas en VirtualBox: {sorted(running_vms)}")
+        else:
+            print(f"[{CYAN}*{NC}] No hay VMs encendidas en VirtualBox.")
+    except Exception as e:
+        print(f"[{YELLOW}!{NC}] Advertencia: No se pudo contactar con vbox-api ({e}). Se usarán solo los nodos explícitos.")
+
+    allowed = extra_names | running_vms
+    if extra_names:
+        print(f"[{CYAN}*{NC}] Nodos objetivo del despliegue: {sorted(extra_names)}")
+    if not allowed:
+        print(f"[{YELLOW}!{NC}] Sin criterio de filtrado — se incluyen todos los nodos del YAML en el inventario.")
+
     inventory = {
         'all': {
             'vars': {
@@ -23,38 +55,45 @@ def _generate_ansible_inventory(nodes, repo_root):
             'children': {}
         }
     }
-    
+
     children = inventory['all']['children']
-    
+
     for node in nodes:
         name = node.get('name')
         if name == 'jumpstart':
             continue
-            
+
+        if allowed and name not in allowed:
+            print(f"[{YELLOW}!{NC}] Omitiendo '{name}' del inventario (no es objetivo ni está encendido).")
+            continue
+
         node_type = node.get('type')
         if not node_type:
             continue
-            
+
         networks = node.get('networks', [])
         if not networks:
             continue
-            
+
         ip = networks[0].get('ip')
         if not ip:
             continue
-            
+
         if node_type not in children:
             children[node_type] = {'hosts': {}}
-            
-        children[node_type]['hosts'][name] = {'ansible_host': ip}
-        
+
+        host_vars = {'ansible_host': ip}
+        if 'vars' in node and isinstance(node['vars'], dict):
+            host_vars.update(node['vars'])
+        children[node_type]['hosts'][name] = host_vars
+
     inventory_path = os.path.join(repo_root, 'ansible', 'inventory', 'hosts.yml')
     os.makedirs(os.path.dirname(inventory_path), exist_ok=True)
-    
+
     try:
         with open(inventory_path, 'w') as f:
             yaml.dump(inventory, f, default_flow_style=False, sort_keys=False)
-        print(f"[{GREEN}+{NC}] Inventario Ansible generado exitosamente en {inventory_path}")
+        print(f"[{GREEN}+{NC}] Inventario Ansible generado en {inventory_path}")
     except Exception as e:
         print(f"[{RED}-{NC}] Error generando inventario Ansible: {e}")
 
@@ -178,8 +217,13 @@ def _generate_autoinstall_files(node, jumpstart_ip, ssh_key, templates_dir, web_
     except Exception as e:
         print(f"[{RED}-{NC}] Error generando user-data para {name}: {e}")
 
-def generate_pxe_configs(nodes, templates_dir=None):
-    """Punto de entrada principal. Coordina la generación de todas las configuraciones."""
+def generate_pxe_configs(nodes, templates_dir=None, extra_names=None):
+    """
+    Punto de entrada principal. Coordina la generación de todas las configuraciones.
+
+    extra_names: lista de nombres de nodos pasados explícitamente al deploy/provision.
+                 Se unen a las VMs encendidas para formar el inventario de Ansible.
+    """
     print("[*] Iniciando generación de configuraciones de red y aprovisionamiento...")
     
     provisioning_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -233,7 +277,7 @@ def generate_pxe_configs(nodes, templates_dir=None):
         print(f"[{GREEN}+{NC}] Generados menús PXE y plantillas Cloud-Init para {processed_nodes} nodos.")
 
     # 3. Generar inventario de Ansible
-    _generate_ansible_inventory(nodes, repo_root)
+    _generate_ansible_inventory(nodes, repo_root, extra_names=extra_names)
 
     # 4. Reiniciar servicios si es necesario
     if dhcp_changed:
@@ -246,5 +290,4 @@ def generate_pxe_configs(nodes, templates_dir=None):
     else:
         print(f"[{GREEN}✓{NC}] Configuración DHCP sin cambios. No es necesario reiniciar isc-dhcp-server.")
         
-    print(f"[{GREEN}✓{NC}] Los servicios TFTP y HTTP no requieren reinicio (leen los archivos en caliente).")
     print(f"[{GREEN}✓{NC}] Generación de configuraciones finalizada exitosamente.")

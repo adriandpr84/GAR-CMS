@@ -8,7 +8,7 @@ Lista de todos los componentes software que forman parte de la solución de apro
 | :--- | :--- | :--- | :--- |
 | **Ubuntu Server** | 22.04.5 LTS (Jammy Jellyfish) | Sistema Operativo base de todas las máquinas virtuales. | [Descarga ISO](https://releases.ubuntu.com/22.04/ubuntu-22.04.5-live-server-amd64.iso) |
 | **VirtualBox** | 7.0.x | Hipervisor Host. | [VirtualBox](https://www.virtualbox.org/) |
-| **Python** | 3.10+ | Lenguaje del orquestador (`provisioner.py`). | Incluido en Ubuntu 22.04 |
+| **Python** | 3.10+ | Lenguaje del orquestador (`cms-deployer` y coordinador). | Incluido en Ubuntu 22.04 |
 
 ## Dependencias de Infraestructura (Jumpstart)
 
@@ -40,6 +40,7 @@ No se requieren librerías externas de `pip`. Todas son instaladas a nivel de si
 | **MariaDB Galera** | `mariadb:10.6` (Docker) | `cluster-master-1/2`, `cluster-worker-1` | Clúster multi-maestro síncrono para base de datos. | Docker Hub / Construido localmente |
 | **HAProxy** | `haproxy:2.9` (Docker) | Clúster Swarm (puerto 3306) | Balanceo activo/pasivo del clúster de base de datos. | Docker Hub |
 | **CheckMK Raw** | `checkmk/check-mk-raw:2.3.0-latest` | `monitoring` (Docker) | Motor centralizado de monitorización de infraestructura. | Docker Hub |
-| **SNMPd Agent** | 5.9.1 (APT) | Todos los 16 nodos de la maqueta | Agente SNMP para recolección de métricas. | Repositorio oficial Ubuntu 22.04 |
-| **UFW** | 0.36+ (APT) | Todos los 16 nodos de la maqueta | Cortafuegos local para bloqueo de puertos. | Repositorio oficial Ubuntu 22.04 |
+| **CheckMK Agent** | 2.3.0p47 (DEB) | Todos los nodos (excepto `monitoring`) | Agente nativo para recolección de métricas y procesos. | Descargado del servidor CheckMK local |
+| **UFW** | 0.36+ (APT) | Todos los nodos de la maqueta | Cortafuegos local para bloqueo de puertos. | Repositorio oficial Ubuntu 22.04 |
+
 

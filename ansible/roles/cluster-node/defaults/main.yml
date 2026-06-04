@@ -48,11 +48,20 @@ db_replication_user: replicator
 db_replication_password: ReplicationPass2026!
 db_galera_cluster_name: gar_galera_cluster
 
-# Tres réplicas SQL reales, cada una fijada a un nodo distinto.
-# Por defecto lo asignamos a los 3 primeros nodos del grupo.
-db_node_1: "{{ groups['cluster-node'][0] }}"
-db_node_2: "{{ groups['cluster-node'][1] }}"
-db_node_3: "{{ groups['cluster-node'][2] }}"
+# Generación automatica de las replicas basada en el grupo de inventario cluster-node (Dinámico)
+db_cluster_nodes: >-
+  {%- set nodes = [] -%}
+  {%- for host in groups['cluster-node'] -%}
+    {%- if hostvars[host]['is_db'] | default(true) | bool -%}
+      {%- set _ = nodes.append({'name': 'db' ~ (nodes | length + 1), 'host': host}) -%}
+    {%- endif -%}
+  {%- endfor -%}
+  {{ nodes }}
+
+# Referencias de compatibilidad retroactiva
+db_node_1: "{{ db_cluster_nodes[0].host | default('') }}"
+db_node_2: "{{ db_cluster_nodes[1].host | default('') }}"
+db_node_3: "{{ db_cluster_nodes[2].host | default('') }}"
 
 # Puerto SQL publicado por HAProxy dentro del Swarm.
 db_public_port: 3306
